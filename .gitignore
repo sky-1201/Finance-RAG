@@ -1,0 +1,40 @@
+# ==========================================
+# 智能金融投研 RAG 系统 - Git Ignore
+# ==========================================
+
+# 1. 环境变量与机密文件 (绝对禁止上传)
+.env
+.env.local
+
+# 2. Python 缓存与运行生成文件
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# 3. 虚拟环境
+venv/
+env/
+.venv/
+
+# 4. IDE 与编辑器配置
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 5. 实验与测试缓存
+.ipynb_checkpoints/
+
+# 6. 本地数据与日志 (不上传真实的财报 PDF 和 Milvus 数据库文件)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep      # 保留目录结构，但不保留文件
+!data/processed/.gitkeep
+logs/
+*.log
+volumes/
+
+7.无关文件
+代码结构
+notebooks/

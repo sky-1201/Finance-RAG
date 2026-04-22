@@ -1,0 +1,33 @@
+# ==========================================
+# 智能金融投研 RAG 系统 - 核心依赖清单
+# Python 版本要求: >= 3.10
+# ==========================================
+
+# 1. 核心编排与大模型接入 (LangChain & Qwen)
+langchain>=0.1.16
+langchain-core>=0.1.45
+langchain-community>=0.0.34
+dashscope>=1.17.0              # 阿里通义千问官方 API SDK
+
+# 2. 脏数据治理与版面分析 (Parsing)
+docling>=1.16.0                # 核心解析器，精准提取 PDF 表格与 Markdown
+
+# 3. 向量数据库与 Embedding (Storage)
+pymilvus>=2.3.6                # Milvus 官方 Python SDK
+
+# 4. 后端服务化 (FastAPI Backend)
+fastapi>=0.110.1               # 异步 Web 框架
+uvicorn[standard]>=0.29.0      # 高性能 ASGI 服务器
+pydantic>=2.7.0                # 数据验证与序列化 (V2版本)
+pydantic-settings>=2.2.1       # 环境变量配置管理
+
+# 5. 前端展示 (Streamlit Frontend)
+streamlit>=1.33.0              # 快速构建 Web 交互界面
+
+# 6. 数据处理与基础工具箱 (Utils)
+pandas>=2.2.2                  # 结构化数据处理
+numpy>=1.26.4                  # 基础数值计算
+python-dotenv>=1.0.1           # 读取 .env 环境变量文件
+
+# 7. 实验与测试环境 (Notebooks)
+jupyter>=1.0.0                 # 提供交互式测试环境

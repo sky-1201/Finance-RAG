@@ -1,0 +1,57 @@
+version: '3.5'
+
+services:
+  # 1. 元数据存储
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+    volumes:
+      - ./volumes/etcd:/etcd  # 把容器里的数据映射到本地 volumes 文件夹
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+
+  # 2. 对象存储（存向量文件）
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - ./volumes/minio:/minio_data
+    command: minio server /minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # 3. Milvus 核心大脑
+  standalone:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.3.13
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - ./volumes/milvus:/var/lib/milvus
+    ports:
+      - "19530:19530"  # Python 代码通过这个端口连接
+    depends_on:
+      - "etcd"
+      - "minio"
+
+  # 4. 可视化界面 (Attu) - 强烈推荐初学者安装
+  attu:
+    container_name: milvus-attu
+    image: zilliz/attu:v2.3.10
+    environment:
+      MILVUS_URL: standalone:19530
+    ports:
+      - "8001:3000"  # 浏览器访问 http://localhost:8000 即可看到界面
+    depends_on:
+      - "standalone"
