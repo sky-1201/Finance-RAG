@@ -74,7 +74,7 @@ def process_and_ingest_document(file_path: str, original_filename: str):
         ingestion_service.run_pipeline(
             pdf_path=file_path,
             original_filename=original_filename,
-            page_range=(1, 5)
+            page_range=None
         )
         logger.info(f"✅ 后台任务完成：文件 {original_filename} 已成功入库。")
     except Exception as e:

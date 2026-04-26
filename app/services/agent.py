@@ -1,5 +1,8 @@
 import logging
-from langchain_community.chat_models import ChatTongyi
+# 🌟 1. 删掉旧的、有 Bug 的 ChatTongyi
+# from langchain_community.chat_models import ChatTongyi
+# 🌟 2. 引入极度稳定的 ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 from app.core.config import settings
 from app.tools.finance_repl import python_repl_tool
@@ -10,10 +13,13 @@ logger = logging.getLogger(__name__)
 
 class FinancialAgentService:
     def __init__(self):
-        # 🌟 必须开启 streaming=True
-        self.llm = ChatTongyi(
-            model=settings.LLM_MODEL,
-            dashscope_api_key=settings.DASHSCOPE_API_KEY,
+        # 🌟 3. 换成 OpenAI 兼容模式对接阿里通义大模型！
+        # 这个底层解析器完美支持流式输出和工具调用，绝不死锁。
+        self.llm = ChatOpenAI(
+            model=settings.LLM_MODEL,  # 依然是你的 qwen3-max
+            api_key=settings.DASHSCOPE_API_KEY,
+            # 关键：把请求发给阿里的兼容服务器，而不是美国 OpenAI
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
             temperature=0.01,
             streaming=True
         )
