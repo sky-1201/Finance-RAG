@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class FinancialAgentService:
     def __init__(self):
+        # 🌟 必须开启 streaming=True
         self.llm = ChatTongyi(
             model=settings.LLM_MODEL,
             dashscope_api_key=settings.DASHSCOPE_API_KEY,
@@ -30,8 +31,6 @@ class FinancialAgentService:
             "警告：不要编造任何财务数据！"
         )
 
-        # 🌟 终极解法：什么参数都不传，只传模型和工具。
-        # 这样不管你装的是哪个版本的 langgraph，都绝对不会报错！
         self.agent_executor = create_react_agent(self.llm, self.tools)
 
     def chat(self, query: str) -> str:
@@ -39,7 +38,6 @@ class FinancialAgentService:
         logger.info("=" * 50)
         logger.info(f"👤 用户提问: {query}")
         try:
-            # 🌟 既然初始化时不传提示词，那我们在提问时，把系统提示词作为第一条消息强行塞进去
             messages = [
                 ("system", self.system_prompt),
                 ("user", query)

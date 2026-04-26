@@ -4,9 +4,8 @@ from app.services.retrieval import RetrievalService
 
 logger = logging.getLogger(__name__)
 
-# 1. 全局变量初始设为 None，不要在这里直接实例化！
+# 全局变量延迟加载，防止应用启动时过早连接数据库报错
 _retriever_service = None
-
 
 @tool
 def financial_retriever_tool(query: str, company: str = None, year: str = None) -> str:
@@ -20,7 +19,6 @@ def financial_retriever_tool(query: str, company: str = None, year: str = None) 
     返回：
     包含上下文片段的纯文本，请仔细阅读返回的文本以提取事实。
     """
-    # 2. 延迟加载 (Lazy Load)：只有大模型真正调用这个工具时，才去连接数据库
     global _retriever_service
     if _retriever_service is None:
         _retriever_service = RetrievalService()
@@ -28,7 +26,6 @@ def financial_retriever_tool(query: str, company: str = None, year: str = None) 
     logger.info(f"🛠️ Agent 决定调用检索工具 | 搜索词: {query} | 公司: {company} | 年份: {year}")
 
     try:
-        # 调用检索 Pipeline
         docs = _retriever_service.run_pipeline(query=query, company=company, year=year)
 
         if not docs:
