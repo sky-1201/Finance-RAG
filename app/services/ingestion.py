@@ -36,8 +36,8 @@ class DocumentIngestionService:
         self.child_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP
-        )
-
+             )
+        
     def _extract_metadata(self, file_name: str) -> dict:
         year_match = re.search(r'(20\d{2})', file_name)
         company_match = re.search(r'^(.*?)(?:20\d{2})', file_name)
