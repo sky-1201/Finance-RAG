@@ -11,7 +11,6 @@ from pymilvus import connections, Collection
 
 logger = logging.getLogger(__name__)
 
-
 class RetrievalService:
     def __init__(self):
         dashscope.api_key = settings.DASHSCOPE_API_KEY
