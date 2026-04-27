@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # --- 模型 API 配置 ---
     DASHSCOPE_API_KEY: str  # 必须在 .env 中配置，否则启动报错
-    EMBEDDING_MODEL: str = "text-embedding-v3"  # 阿里最新的大模型嵌入 API
+    EMBEDDING_MODEL: str = "text-embedding-v4"  # 阿里最新的大模型嵌入 API
     LLM_MODEL: str = "qwen3-max"
 
     # --- Milvus 向量库配置 ---

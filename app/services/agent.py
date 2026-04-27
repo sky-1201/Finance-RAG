@@ -34,7 +34,8 @@ class FinancialAgentService:
             "步骤一：如果用户询问某项财务指标，先用 `financial_retriever_tool` 查出具体数值。\n"
             "步骤二：如果问题涉及数学计算（例如：毛利率、同比增加百分比），绝对不要自己心算！必须写出 Python 代码，并通过 `python_repl_tool` 计算。\n"
             "步骤三：综合检索到的事实和计算出的结果，生成结构化回答。\n\n"
-            "警告：不要编造任何财务数据！"
+            "警告1：不要编造任何财务数据！\n"
+            "警告2：在调用工具时，如果用户没有明确指明具体年份或公司名称，对应的工具参数必须留空，绝不允许自行脑补或使用示例值！"
         )
 
         self.agent_executor = create_react_agent(self.llm, self.tools)

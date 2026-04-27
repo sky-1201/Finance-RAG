@@ -1,3 +1,4 @@
+import random
 import re
 import logging
 import uuid
@@ -5,7 +6,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from docling.document_converter import DocumentConverter
-from docling.datamodel.pipeline_options import PdfPipelineOptions
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.embeddings import DashScopeEmbeddings
@@ -28,16 +28,24 @@ class DocumentIngestionService:
             dashscope_api_key=settings.DASHSCOPE_API_KEY
         )
 
-        # 3. 初始化两种切分器
+        # 3. 初始化切分器
         self.parent_splitter = MarkdownHeaderTextSplitter(
             headers_to_split_on=[("#", "H1"), ("##", "H2"), ("###", "H3")],
             strip_headers=False
         )
+
+        # 🌟 核心防丢失机制 1：父块物理兜底切分器
+        # 确保哪怕遇到十几万字不分段的变态财报表格，父块也绝对不会超过 Milvus 65535 字符的物理极限，彻底杜绝数据截断丢失！
+        self.parent_fallback_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=40000,
+            chunk_overlap=1000
+        )
+
         self.child_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP
-             )
-        
+        )
+
     def _extract_metadata(self, file_name: str) -> dict:
         year_match = re.search(r'(20\d{2})', file_name)
         company_match = re.search(r'^(.*?)(?:20\d{2})', file_name)
@@ -71,10 +79,19 @@ class DocumentIngestionService:
             logger.info("Step 2: Parent and Child splitting...")
             parent_docs = self.parent_splitter.split_text(md_text)
 
+            # 🌟 新增：对切出来的超大父块进行物理兜底，确保父块信息 100% 留存
+            safe_parent_docs = []
+            for doc in parent_docs:
+                if len(doc.page_content) > 40000:
+                    safe_parent_docs.extend(self.parent_fallback_splitter.split_documents([doc]))
+                else:
+                    safe_parent_docs.append(doc)
+
             file_meta = self._extract_metadata(display_name)
 
             final_docs = []
-            for p_doc in parent_docs:
+            # 注意：这里改成了遍历安全的 safe_parent_docs
+            for p_doc in safe_parent_docs:
                 parent_id = str(uuid.uuid4())
                 p_doc.metadata.update(file_meta)
                 p_doc.metadata["parent_id"] = parent_id
@@ -88,7 +105,7 @@ class DocumentIngestionService:
                     final_docs.append(c_doc)
 
             # ==========================================
-            # C. 存入 Milvus (纯原生 PyMilvus，安全截断与分批)
+            # C. 存入 Milvus (引入“非对称假向量”架构优化)
             # ==========================================
             logger.info(f"Step 3: Upserting {len(final_docs)} chunks to Milvus natively...")
 
@@ -126,37 +143,53 @@ class DocumentIngestionService:
             else:
                 collection = Collection(collection_name)
 
-            # 3. 准备数据并进行 Embedding (带截断和分批处理)
-            logger.info(f"🧠 正在调用模型生成向量，共计 {len(final_docs)} 个文本块...")
+            # 3. 🌟 核心架构优化：非对称 Embedding
+            # 将父块和子块分离，只让子块去消耗 API 生成真实向量
+            child_docs = [doc for doc in final_docs if doc.metadata["doc_level"] == "child"]
+            parent_docs = [doc for doc in final_docs if doc.metadata["doc_level"] == "parent"]
 
-            # 🌟 核心防崩溃机制 3：防止超过 Milvus VARCHAR 最大限制
-            texts = [doc.page_content[:60000] for doc in final_docs]
-            metadatas = [doc.metadata for doc in final_docs]
+            logger.info(
+                f"🧠 正在调用模型生成子块向量 (共 {len(child_docs)} 个)，父块 (共 {len(parent_docs)} 个) 直接跳过...")
 
-            batch_size = 20
-            embeddings = []
+            # --- a. 对子块进行真实的 Embedding（分批请求 API） ---
+            child_texts = [doc.page_content for doc in child_docs]
+            child_embeddings = []
+            batch_size = 10
 
-            for i in range(0, len(texts), batch_size):
-                batch_texts = texts[i:i + batch_size]
+            for i in range(0, len(child_texts), batch_size):
+                batch_texts = child_texts[i:i + batch_size]
                 logger.info(
-                    f"⏳ 正在向阿里 API 请求向量转换: 进度 {i + 1} ~ {min(i + batch_size, len(texts))} / {len(texts)}")
+                    f"⏳ 正在向 API 请求子块向量: 进度 {i + 1} ~ {min(i + batch_size, len(child_texts))} / {len(child_texts)}")
 
-                # 🌟 核心防崩溃机制 2：阿里 API 单次文本最大长度为 8192
+                # 阿里 API 单次文本最大长度为 8192
                 batch_texts_for_embed = [t[:8000] for t in batch_texts]
-
                 batch_embeddings = self.embeddings.embed_documents(batch_texts_for_embed)
-                embeddings.extend(batch_embeddings)
+                child_embeddings.extend(batch_embeddings)
+
+            # --- b. 对父块生成“假向量”（瞬间完成，零计算成本） ---
+            # ❌ 删掉这行引发黑洞的纯相同向量：
+            # dummy_vector = [0.1] * 1024
+            # parent_embeddings = [dummy_vector for _ in parent_docs]
+
+            # ✅ 替换为：生成带有随机噪音的假向量，强制打散它们在 HNSW 图中的位置！
+            parent_embeddings = [
+                [random.uniform(-0.1, 0.1) for _ in range(1024)]
+                for _ in parent_docs
+            ]
+
+            parent_texts = [doc.page_content for doc in parent_docs]
 
             # 4. 组装并原生插入数据
             insert_data = [
-                texts,  # 文本列
-                embeddings,  # 向量列
-                metadatas  # 元数据列
+                child_texts + parent_texts,  # 文本列
+                child_embeddings + parent_embeddings,  # 向量列 (前段真实，后段作假)
+                [doc.metadata for doc in child_docs] + [doc.metadata for doc in parent_docs]  # 元数据列
             ]
+
             collection.insert(insert_data)
             collection.flush()
 
-            logger.info("✅ Native Ingestion Pipeline Finished Successfully!")
+            logger.info("✅ 极其纯净的 Native Ingestion Pipeline 执行成功，成本节省一半！")
 
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {str(e)}", exc_info=True)

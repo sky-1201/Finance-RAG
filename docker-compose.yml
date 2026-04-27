@@ -52,6 +52,6 @@ services:
     environment:
       MILVUS_URL: standalone:19530
     ports:
-      - "8001:3000"  # 浏览器访问 http://localhost:8000 即可看到界面
+      - "8001:3000"  # 浏览器访问 http://localhost:8001 即可看到界面
     depends_on:
       - "standalone"

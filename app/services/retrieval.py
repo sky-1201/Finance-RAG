@@ -39,17 +39,20 @@ class RetrievalService:
     def _retrieve_child_chunks(self, query: str, company: Optional[str], year: Optional[str], top_k: int = 10) -> List[
         Document]:
         # 原生 JSON 字段过滤语法
-        expr_parts = ["metadata['doc_level'] == 'child'"]
+        expr_parts = ['metadata["doc_level"] == "child"']
         if company:
-            expr_parts.append(f"metadata['company'] == '{company}'")
+            expr_parts.append(f'metadata["company"] == "{company}"')
         if year:
-            expr_parts.append(f"metadata['year'] == '{year}'")
+            expr_parts.append(f'metadata["year"] == "{year}"')
 
         expr = " and ".join(expr_parts)
         logger.info(f"🔎 执行原生子块检索 | 表达式: {expr}")
 
         try:
             query_vector = self.embeddings.embed_query(query)
+
+            # 🌟 核心修复 1：每次检索前强制同步硬盘最新数据进内存！
+            self.collection.load()
 
             # 🌟 原生向量检索
             results = self.collection.search(

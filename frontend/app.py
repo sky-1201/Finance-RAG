@@ -12,7 +12,7 @@ st.set_page_config(page_title="智能投研 Agent", page_icon="📈", layout="ce
 # ==========================================
 with st.sidebar:
     st.header("📂 知识库管理")
-    st.markdown("请上传真实的 A 股上市公司财报 PDF。")
+    st.markdown("请上传公司财报 PDF。")
 
     uploaded_file = st.file_uploader("上传 PDF 财报", type=["pdf"])
 
@@ -34,7 +34,7 @@ with st.sidebar:
                     st.error(f"网络连接错误，请确保后端已启动。详情: {str(e)}")
 
     st.divider()
-    st.info("💡 **提示:** \n建议上传类似《深信服2024年半年度报告.pdf》命名格式的文件，以便系统自动提取 Metadata。")
+    st.info("💡 **提示:** \n建议上传类似《深信服2025年半年度报告.pdf》命名格式的文件，以便系统自动提取 Metadata。")
 
 st.title("📈 智能金融投研 Agent")
 st.markdown("基于 `Docling版面分析` + `Milvus混合检索` + `Qwen代码执行` 构建")
@@ -50,7 +50,7 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # 用户输入框
-if prompt := st.chat_input("请输入您的问题，例如：计算2024年深信服的毛利率"):
+if prompt := st.chat_input("请输入您的问题，例如：计算2025年深信服的毛利率"):
     # 1. 将用户问题上屏并保存
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
