@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # --- Milvus 向量库配置 ---
     MILVUS_URI: str = "./data/milvus_financial.db"  # 本地测试使用轻量级 Lite
     MILVUS_HOST: str = "127.0.0.1"
-    MILVUS_PORT: str = "19530"
+    MILVUS_PORT: str = "19531"
     COLLECTION_NAME: str = "financial_reports_parent_child"
 
     # --- Chunking 策略配置 (即将用到) ---

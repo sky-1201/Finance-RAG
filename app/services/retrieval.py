@@ -9,6 +9,8 @@ from app.services.hybrid_search import HybridSearchEngine
 
 # 🌟 关键：彻底抛弃 langchain_milvus，直接使用原生
 from pymilvus import connections, Collection
+# 🌟 新增：引入 Postgres 数据库连接和表模型
+from app.database import SessionLocal, ParentDocument
 
 logger = logging.getLogger(__name__)
 
@@ -77,38 +79,50 @@ class RetrievalService:
             logger.error(f"❌ 子块检索失败: {str(e)}", exc_info=True)
             return []
 
-    def _fetch_parent_chunks(self, child_docs: List[Document]) -> List[Document]:
+    def _fetch_parent_chunks(self, child_docs: list) -> list:
+        """
+        核心架构变动：通过 parent_id 从 PostgreSQL 中极速提取完整父块
+        """
         if not child_docs:
             return []
 
-        parent_ids = list(set([doc.metadata.get("parent_id") for doc in child_docs if doc.metadata.get("parent_id")]))
+        # 1. 提取并去重所有的 parent_id
+        # 使用 set() 极其重要，防止多个子块命中同一个父块导致重复查询
+        parent_ids = list(set([
+            doc.metadata.get("parent_id")
+            for doc in child_docs
+            if doc.metadata.get("parent_id")
+        ]))
 
         if not parent_ids:
-            return child_docs
+            logger.warning("⚠️ 命中的子块中没有找到 parent_id！")
+            return []
 
-        parent_ids_str = json.dumps(parent_ids)
-        expr = f"metadata['doc_level'] == 'parent' and metadata['parent_id'] in {parent_ids_str}"
+        logger.info(f"🔗 正在从 PostgreSQL 中极速提取 {len(parent_ids)} 个完整父块...")
 
-        logger.info(f"🔗 顺藤摸瓜：提取了 {len(parent_ids)} 个完整父块。")
-
+        # 2. 连接 PostgreSQL 并发起批量查询
+        db = SessionLocal()
+        parent_docs = []
         try:
-            # 🌟 原生标量查询（不需要向量计算，速度极快）
-            results = self.collection.query(
-                expr=expr,
-                output_fields=["text", "metadata"],
-                limit=len(parent_ids)
-            )
+            # 🌟 这一句 SQL 魔法：SELECT * FROM parent_documents WHERE id IN (...)
+            records = db.query(ParentDocument).filter(ParentDocument.id.in_(parent_ids)).all()
 
-            parent_docs = []
-            for res in results:
-                text = res.get("text")
-                meta = res.get("metadata", {})
-                parent_docs.append(Document(page_content=text, metadata=meta))
+            # 3. 将查出的数据库记录，重新封装成 LangChain 能认的 Document 对象
+            for record in records:
+                # 注意：因为数据库里存了 JSONB，这里拿出来直接就是字典，非常优雅
+                parent_docs.append(Document(
+                    page_content=record.content,
+                    metadata=record.meta_data or {}
+                ))
 
-            return parent_docs
+            logger.info(f"✅ 成功提取 {len(parent_docs)} 个父块，即将送入 Reranker 重排！")
+
         except Exception as e:
-            logger.error(f"❌ 父块召回失败: {str(e)}", exc_info=True)
-            return child_docs
+            logger.error(f"❌ PostgreSQL 查询失败: {str(e)}")
+        finally:
+            db.close()  # 养成好习惯，查询完毕关闭连接
+
+        return parent_docs
 
     def _rerank_documents(self, query: str, docs: List[Document], top_n: int = 3) -> List[Document]:
         if not docs:

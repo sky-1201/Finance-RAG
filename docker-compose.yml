@@ -1,57 +1,90 @@
-version: '3.5'
+version: '3.8'
 
 services:
-  # 1. 元数据存储
-  etcd:
-    container_name: milvus-etcd
+  # ==========================================
+  # 1. 向量计算层：隔离版 Milvus (v2.4.0) + Attu
+  # ==========================================
+  etcd-v2:
+    container_name: milvus-etcd-v2
     image: quay.io/coreos/etcd:v3.5.5
     environment:
       - ETCD_AUTO_COMPACTION_MODE=revision
       - ETCD_AUTO_COMPACTION_RETENTION=1000
       - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
     volumes:
-      - ./volumes/etcd:/etcd  # 把容器里的数据映射到本地 volumes 文件夹
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
 
-  # 2. 对象存储（存向量文件）
-  minio:
-    container_name: milvus-minio
+  minio-v2:
+    container_name: milvus-minio-v2
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
+    ports:
+      - "9003:9001"
+      - "9002:9000"
     volumes:
-      - ./volumes/minio:/minio_data
-    command: minio server /minio_data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 20s
-      retries: 3
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/minio:/minio_data
+    command: minio server /minio_data --console-address ":9001"
 
-  # 3. Milvus 核心大脑
-  standalone:
-    container_name: milvus-standalone
-    image: milvusdb/milvus:v2.3.13
+  standalone-v2:
+    container_name: milvus-standalone-v2
+    image: milvusdb/milvus:v2.4.0
     command: ["milvus", "run", "standalone"]
     environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
+      ETCD_ENDPOINTS: etcd-v2:2379
+      MINIO_ADDRESS: minio-v2:9000
     volumes:
-      - ./volumes/milvus:/var/lib/milvus
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/milvus:/var/lib/milvus
     ports:
-      - "19530:19530"  # Python 代码通过这个端口连接
+      - "19531:19530" # Python 连这个端口
+      - "9092:9091"
     depends_on:
-      - "etcd"
-      - "minio"
+      - "etcd-v2"
+      - "minio-v2"
 
-  # 4. 可视化界面 (Attu) - 强烈推荐初学者安装
-  attu:
-    container_name: milvus-attu
-    image: zilliz/attu:v2.3.10
+  # 🌟 新增：新版 Attu 面板
+  attu-v2:
+    container_name: milvus-attu-v2
+    image: zilliz/attu:v2.4.0
     environment:
-      MILVUS_URL: standalone:19530
+      # 注意：在 Docker 内部网络，它直接通过容器名和原始端口 19530 寻找 Milvus
+      MILVUS_URL: milvus-standalone-v2:19530
     ports:
-      - "8001:3000"  # 浏览器访问 http://localhost:8001 即可看到界面
+      # 🌟 暴露给本机的 8002 端口 (假设你的旧版本或 FastAPI 在用 8001)  http://localhost:8002
+      - "8002:3000"
     depends_on:
-      - "standalone"
+      - "standalone-v2"
+
+  # ==========================================
+  # 2. 关系型存储层：PostgreSQL + pgAdmin
+  # ==========================================
+  postgres-v2:
+    container_name: finance-rag-postgres-v2
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: rag_password
+      POSTGRES_DB: rag_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/postgres:/var/lib/postgresql/data
+
+  # 🌟 新增：pgAdmin 可视化管理面板 账号：admin@rag.com 密码:admin
+  pgadmin-v2:
+    container_name: finance-rag-pgadmin-v2
+    image: dpage/pgadmin4
+    environment:
+      # 这是你登录 pgAdmin 网页的账号密码
+      PGADMIN_DEFAULT_EMAIL: admin@rag.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      # 🌟 暴露给本机的 5050 端口
+      - "5050:80"
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/pgadmin:/var/lib/pgadmin
+    depends_on:
+      - "postgres-v2"

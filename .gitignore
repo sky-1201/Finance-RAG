@@ -33,7 +33,7 @@ data/processed/*
 !data/processed/.gitkeep
 logs/
 *.log
-volumes/
+volumes_v2/
 
 7.无关文件
 代码结构

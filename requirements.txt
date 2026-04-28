@@ -31,3 +31,7 @@ python-dotenv>=1.0.1           # 读取 .env 环境变量文件
 
 # 7. 实验与测试环境 (Notebooks)
 jupyter>=1.0.0                 # 提供交互式测试环境
+
+# 关系型数据库驱动与 ORM 框架 (双库解耦新增)
+SQLAlchemy==2.0.29
+psycopg2-binary==2.9.9
