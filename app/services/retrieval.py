@@ -5,6 +5,7 @@ from typing import List, Optional
 from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
 from app.core.config import settings
+from app.services.hybrid_search import HybridSearchEngine
 
 # 🌟 关键：彻底抛弃 langchain_milvus，直接使用原生
 from pymilvus import connections, Collection
@@ -144,13 +145,75 @@ class RetrievalService:
             logger.error(f"❌ Rerank 过程发生异常: {str(e)}", exc_info=True)
             return docs[:top_n]
 
+    def _fetch_all_child_chunks_for_bm25(self, company: Optional[str], year: Optional[str]) -> List[dict]:
+        """将特定公司/年份的所有子块拉入内存，构建全局 BM25 候选池"""
+        expr_parts = ['metadata["doc_level"] == "child"']
+        if company:
+            expr_parts.append(f'metadata["company"] == "{company}"')
+        if year:
+            expr_parts.append(f'metadata["year"] == "{year}"')
+
+        expr = " and ".join(expr_parts)
+
+        try:
+            # 使用标量 query 极速拉取所有符合条件的子块
+            results = self.collection.query(
+                expr=expr,
+                output_fields=["text", "metadata"],
+                limit=16384  # 设置一个足够大的值，确保拉出该财报所有子块
+            )
+            return results
+        except Exception as e:
+            logger.error(f"❌ 拉取全量子块构建 BM25 索引失败: {str(e)}")
+            return []
+
     def run_pipeline(self, query: str, company: Optional[str] = None, year: Optional[str] = None,
                      final_top_n: int = 3) -> List[Document]:
         try:
-            child_docs = self._retrieve_child_chunks(query, company, year, top_k=10)
-            parent_docs = self._fetch_parent_chunks(child_docs)
+            hybrid_engine = HybridSearchEngine()
+
+            # =======================================================
+            # 🟢 第一阶段：并行双路召回 (目标：子块)
+            # =======================================================
+            # 1. 向量路 (Dense)：捞取语义相关的 Top 60 子块
+            logger.info("👉 启动路 1：向量检索...")
+            dense_child_docs = self._retrieve_child_chunks(query, company, year, top_k=60)
+            # 转换成 dict 格式以适配 RRF
+            dense_results = [{"text": doc.page_content, "metadata": doc.metadata} for doc in dense_child_docs]
+
+            # 2. 关键词路 (Sparse/BM25)：捞取字面匹配的 Top 30 子块
+            logger.info("👉 启动路 2：全局内存 BM25 检索...")
+            all_corpus_dicts = self._fetch_all_child_chunks_for_bm25(company, year)
+            bm25_results = hybrid_engine.execute_bm25_search(
+                query=query,
+                document_pool=all_corpus_dicts,
+                top_n=30
+            )
+
+            # =======================================================
+            # 🟣 第二阶段：RRF 子块融合打分
+            # =======================================================
+            logger.info("👉 阶段 2：执行 RRF 双路子块融合...")
+            fused_dicts = hybrid_engine.compute_rrf(dense_results, bm25_results)
+
+            # 提取融合后得分最高的前 15 个“极品子块”
+            top_fused_dicts = fused_dicts[:15]
+            top_fused_docs = [Document(page_content=d["text"], metadata=d["metadata"]) for d in top_fused_dicts]
+
+            # =======================================================
+            # 🟠 第三阶段：顺藤摸瓜找父块 (防收敛黑洞)
+            # =======================================================
+            logger.info("👉 阶段 3：基于最优子块，提取完整父块...")
+            # 因为我们提供的子块既有语义强的，又有关键词强的，映射出的父块质量极高
+            parent_docs = self._fetch_parent_chunks(top_fused_docs)
+
+            # =======================================================
+            # 🔴 第四阶段：大模型终极重排
+            # =======================================================
             final_docs = self._rerank_documents(query, parent_docs, top_n=final_top_n)
+
             return final_docs
+
         except Exception as e:
             logger.error(f"❌ 检索 Pipeline 崩溃: {str(e)}", exc_info=True)
             return []
