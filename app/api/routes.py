@@ -1,4 +1,8 @@
-#启动命令 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+#启动命令
+#后端：uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+#milvus：docker-compose up -d
+
+
 import json
 import logging
 import os
