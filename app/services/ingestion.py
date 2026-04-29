@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 import re
 import uuid
+import hashlib
 
 # LangChain 相关
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
@@ -17,7 +18,7 @@ from app.core.config import settings
 from docling.document_converter import DocumentConverter
 
 # 🌟 新增：引入 Postgres 数据库连接和表模型
-from app.database import SessionLocal, ParentDocument
+from app.database import SessionLocal, ParentDocument,UploadedFile
 
 logger = logging.getLogger(__name__)
 
@@ -50,20 +51,56 @@ class DocumentIngestionService:
             chunk_overlap=settings.CHUNK_OVERLAP
         )
 
+    def _calculate_md5(self, file_path: str) -> str:
+        """极速计算文件的 MD5 指纹"""
+        hash_md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            # 每次读取 4096 字节，防止遇到几个 G 的文件撑爆内存
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    """提取年份和公司名"""
+
     def _extract_metadata(self, file_name: str) -> dict:
         year_match = re.search(r'(20\d{2})', file_name)
         company_match = re.search(r'^(.*?)(?:20\d{2})', file_name)
+
+        # 获取原始匹配的字符串
+        raw_company = company_match.group(1) if company_match else "未知"
+
+        # 🌟 核心清洗逻辑：剔除字符串首尾的空格、全/半角冒号、破折号、下划线等标点符号
+        # strip() 里面的字符就是我们要剔除的“黑名单”
+        clean_company = raw_company.strip(" ：:_- \t")
+
         return {
             "year": year_match.group(1) if year_match else "未知",
-            "company": company_match.group(1) if company_match else "未知",
+            "company": clean_company,  # 存入清洗后的干净名称
             "source": file_name
         }
 
     def run_pipeline(self, pdf_path: str, original_filename: str = None, page_range: Optional[Tuple[int, int]] = None):
-        """完整的端到端入库流程 (双库架构)"""
+        """完整的端到端入库流程 (带哈希去重)"""
         try:
             path = Path(pdf_path)
             display_name = original_filename if original_filename else path.name
+
+            # ==========================================
+            # 🛡️ Step 0: 物理级指纹查重 (Hash Fingerprinting)
+            # ==========================================
+            logger.info(f"Step 0: 正在计算文件指纹并查重...")
+            file_md5 = self._calculate_md5(pdf_path)
+
+            db = SessionLocal()
+            try:
+                # 去数据库里查一查这个指纹有没有登记过
+                existing_file = db.query(UploadedFile).filter(UploadedFile.file_hash == file_md5).first()
+                if existing_file:
+                    logger.warning(f"🚫 拦截重复文件！【{display_name}】(MD5: {file_md5}) 已于 {existing_file.upload_time} 入库。")
+                    logger.warning("已自动跳过解析与向量化，防止数据库污染与 Token 浪费！")
+                    return {"status": "skipped", "message": "文件已存在，无需重复入库"}
+            finally:
+                db.close() # 查完赶紧关门
 
             # ==========================================
             # A. 解析 PDF (Docling)
@@ -120,6 +157,7 @@ class DocumentIngestionService:
             # ----------------------------------------------------
             logger.info("📦 开始将完整父块写入 PostgreSQL 存储层...")
             db = SessionLocal()
+            inserted_parent_ids = []  # 🌟 新增：准备一个小本本
             try:
                 postgres_records = []
                 for p_doc in safe_parent_docs:
@@ -129,6 +167,7 @@ class DocumentIngestionService:
                         meta_data=p_doc.metadata
                     )
                     postgres_records.append(record)
+                    inserted_parent_ids.append(p_doc.metadata["parent_id"])  # 🌟 记下 ID
 
                 db.add_all(postgres_records)
                 db.commit()
@@ -201,6 +240,42 @@ class DocumentIngestionService:
             collection.flush()
 
             logger.info("✅ 完美的双库解耦入库完成！计算(Milvus)与存储(Postgres)彻底分离。")
+            # 🌟 新增：所有步骤都成功后，将文件指纹永久登记在案！
+            db = SessionLocal()
+            try:
+                new_upload = UploadedFile(file_hash=file_md5, file_name=display_name)
+                db.add(new_upload)
+                db.commit()
+                logger.info(f"✅ 文件指纹 {file_md5} 已登记，未来将自动拦截该文件的重复上传。")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"⚠️ 指纹登记失败: {str(e)}")
+            finally:
+                db.close()
+
+            return {"status": "success", "message": "入库大闭环执行成功！"}
+
 
         except Exception as e:
-            logger.error(f"❌ Pipeline failed: {str(e)}", exc_info=True)
+            logger.error(f"❌ Pipeline failed: {str(e)}")
+            # 🌟🌟🌟 新增：企业级分布式事务补偿机制 (Rollback Orphan Data) 🌟🌟🌟
+            # 如果脚本崩溃了，并且刚才小本本上记了已经写入 Postgres 的 ID
+            if 'inserted_parent_ids' in locals() and inserted_parent_ids:
+                logger.warning("⚠️ 检测到后续流程(API/Milvus)崩溃，正在触发补偿事务...")
+                logger.warning(f"🧹 正在从 PostgreSQL 擦除 {len(inserted_parent_ids)} 条孤儿父块数据，以保证双库一致性！")
+                db_rollback = SessionLocal()
+                try:
+                    # 拿着小本本上的 ID，去数据库里把它们全删了！
+                    db_rollback.query(ParentDocument).filter(
+                        ParentDocument.id.in_(inserted_parent_ids)
+                    ).delete(synchronize_session=False)
+                    db_rollback.commit()
+                    logger.info("✅ 补偿回滚成功！环境已恢复至入库前的纯净状态。")
+                except Exception as rollback_err:
+                    logger.error(f"❌ 灾难性故障：回滚 PostgreSQL 数据失败: {rollback_err}")
+                finally:
+                    db_rollback.close()
+            raise e  # 最后还是要把原来的错误抛出来，让开发者知道为啥挂了
+
+
+

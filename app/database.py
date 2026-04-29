@@ -1,8 +1,10 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, String, Text
+from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, String, Text, DateTime
+from sqlalchemy.sql import func
 
 # 🌟 加载 .env 文件
 load_dotenv()
@@ -28,6 +30,17 @@ class ParentDocument(Base):
     id = Column(String, primary_key=True, index=True)
     content = Column(Text, nullable=False)
     meta_data = Column("metadata", JSONB)
+
+# 🌟 新增：文件上传去重登记表
+class UploadedFile(Base):
+    __tablename__ = "uploaded_files"
+
+    # 将文件的 MD5 哈希值作为主键（绝对唯一）
+    file_hash = Column(String, primary_key=True, index=True)
+    # 记录文件名，方便以后查看
+    file_name = Column(String, nullable=False)
+    # 自动记录上传的时间
+    upload_time = Column(DateTime(timezone=True), server_default=func.now())
 
 def init_db():
     print(f"⏳ 正在连接 PostgreSQL ({PG_HOST}:{PG_PORT}) 并初始化表结构...")
