@@ -19,6 +19,7 @@ from docling.document_converter import DocumentConverter
 
 # 🌟 新增：引入 Postgres 数据库连接和表模型
 from app.database import SessionLocal, ParentDocument,UploadedFile
+from pypdf import PdfReader  # 如果没有安装，请在终端运行 pip install pypdf
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +104,43 @@ class DocumentIngestionService:
                 db.close() # 查完赶紧关门
 
             # ==========================================
-            # A. 解析 PDF (Docling)
+            # A. 解析 PDF (Docling) - 🌟 内存保护：分块流式解析
             # ==========================================
-            logger.info(f"Step 1: Parsing PDF {display_name}...")
+            logger.info(f"Step 1: 启动内存安全模式 Parsing PDF {display_name}...")
 
-            if page_range is None:
+            md_text = ""
+
+            try:
+                # 1. 先用极其轻量的 pypdf 偷看一下总页数
+                reader = PdfReader(path)
+                total_pages = len(reader.pages)
+                logger.info(f"📄 检测到该文件共有 {total_pages} 页，准备切片解析...")
+
+                # 2. 核心：每 30 页为一个批次，防止内存爆炸
+                chunk_size = 30
+
+                # 如果用户没有指定页码，我们就自己按批次循环
+                if page_range is None:
+                    for start_page in range(1, total_pages + 1, chunk_size):
+                        end_page = min(start_page + chunk_size - 1, total_pages)
+                        logger.info(f"⏳ 正在解析批次: 第 {start_page} ~ {end_page} 页...")
+
+                        # 让 Docling 只处理这几十页
+                        doc_result = self.converter.convert(path, page_range=(start_page, end_page))
+                        # 把这部分转成 Markdown 拼接到总文本里
+                        md_text += doc_result.document.export_to_markdown() + "\n\n"
+
+                else:
+                    # 如果用户本来就指定了小范围，就按用户的来
+                    doc_result = self.converter.convert(path, page_range=page_range)
+                    md_text = doc_result.document.export_to_markdown()
+
+            except Exception as e:
+                logger.error(f"❌ 分块解析失败，尝试退回全量解析: {e}")
                 doc_result = self.converter.convert(path)
-            else:
-                doc_result = self.converter.convert(path, page_range=page_range)
+                md_text = doc_result.document.export_to_markdown()
 
-            md_text = doc_result.document.export_to_markdown()
+            logger.info("✅ PDF 全部解析完毕，内存平稳释放！准备进行文本切分...")
 
             # ==========================================
             # B. 父子块切分与 Metadata 组装
