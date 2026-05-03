@@ -1,10 +1,12 @@
 #streamlit run frontend/app.py
-
+import os
 import streamlit as st
 import requests
 import json
 import time
 
+# 如果在 Docker 里，它会读取环境变量；如果在本地跑，它默认用 localhost
+API_BASE_URL = os.getenv("API_URL", "http://localhost:8000")
 # 配置页面基础属性
 
 st.set_page_config(page_title="智能投研 Agent", page_icon="📈", layout="centered")
@@ -25,7 +27,7 @@ with st.sidebar:
                     # 使用 requests 发送 multipart/form-data 文件
                     files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "application/pdf")}
                     # 注意端口号需与 FastAPI 一致
-                    upload_res = requests.post("http://127.0.0.1:8000/api/v1/upload", files=files)
+                    upload_res = requests.post(f"{API_BASE_URL}/api/v1/upload", files=files)
 
                     if upload_res.status_code == 200:
                         st.success(
@@ -67,7 +69,7 @@ if prompt := st.chat_input("请输入您的问题，例如：计算2025年深信
         try:
             # 注意：这里的 URL 端口要和 FastAPI 启动的端口一致 (默认 8000)
             response = requests.post(
-                "http://127.0.0.1:8000/api/v1/chat/stream",
+                f"{API_BASE_URL}/api/v1/chat/stream",
                 json={"query": prompt},
                 stream=True,
                 timeout=60

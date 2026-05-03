@@ -8,32 +8,39 @@ langchain>=0.1.16
 langchain-core>=0.1.45
 langchain-community>=0.0.34
 dashscope>=1.17.0              # 阿里通义千问官方 API SDK
+langchain_openai>=0.1.3
 
 # 2. 脏数据治理与版面分析 (Parsing)
 docling>=1.16.0                # 核心解析器，精准提取 PDF 表格与 Markdown
+pypdf>=3.17.0                  # 轻量级 PDF 页数读取工具，用于 OOM 防御
 
 # 3. 向量数据库与 Embedding (Storage)
-pymilvus>=2.3.6                # Milvus 官方 Python SDK
+pymilvus>=2.4.0                # Milvus 官方 Python SDK (与 v2.4.0 容器对齐)
 
 # 4. 后端服务化 (FastAPI Backend)
 fastapi>=0.110.1               # 异步 Web 框架
 uvicorn[standard]>=0.29.0      # 高性能 ASGI 服务器
-pydantic>=2.7.0                # 数据验证与序列化 (V2版本)
+pydantic>=2.7.0                # 数据验证与序列化
 pydantic-settings>=2.2.1       # 环境变量配置管理
+python-multipart>=0.0.9        # 🚨 必加：FastAPI 处理文件上传的核心依赖
 
-# 5. 前端展示 (Streamlit Frontend)
+# 5. 前端展示与通信 (Streamlit Frontend)
 streamlit>=1.33.0              # 快速构建 Web 交互界面
+requests>=2.31.0               # 🚨 必加：用于前后端 API 通信
 
 # 6. 数据处理与基础工具箱 (Utils)
 pandas>=2.2.2                  # 结构化数据处理
 numpy>=1.26.4                  # 基础数值计算
 python-dotenv>=1.0.1           # 读取 .env 环境变量文件
 
-# 7. 实验与测试环境 (Notebooks)
-jupyter>=1.0.0                 # 提供交互式测试环境
-
-# 关系型数据库驱动与 ORM 框架 (双库解耦新增)
+# 7. 关系型数据库驱动与 ORM 框架 (PostgreSQL)
 SQLAlchemy==2.0.29
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.9         # 专为容器环境准备的二进制驱动，无需编译
 
-pypdf
+# 8. 检索算法与分词库 (双路召回依赖)
+jieba>=0.42.1
+rank-bm25>=0.2.2
+
+# 9. Agent 编排框架与文本处理
+langgraph>=0.0.30
+langchain-text-splitters>=0.0.1
