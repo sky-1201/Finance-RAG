@@ -1,29 +1,85 @@
-# 🚀 FinanceRAG: 企业级金融财报智能问答系统
+# 📈 Finance-RAG: 企业级金融投研 Agentic RAG 系统
 
-![Python](https://img.shields.io/badge/Python-3.10-blue) ![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED) ![Milvus](https://img.shields.io/badge/Milvus-2.4.0-blueviolet)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-green)
+![Milvus](https://img.shields.io/badge/Milvus-2.4-blueviolet)
+![LangGraph](https://img.shields.io/badge/LangGraph-Agent-orange)
+![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
-## 📖 项目简介
-本项目是一个基于云原生架构（Docker 容器化）的企业级 RAG（检索增强生成）系统。专门针对百页以上的长文本金融财报（如《年度报告》）进行深度解析与精准问答。
-系统实现了**计算层与存储层的彻底解耦**，并支持实时流式输出，具备高可用、易部署的生产级特性。
+Finance-RAG 是一个专为处理复杂金融财报、研报设计的企业级“检索增强生成（RAG）”与“多智能体（Agent）”结合的问答系统。针对大模型在垂直领域中常见的**“上下文碎片化”、“长文本召回率低”**以及**“财务数据计算幻觉”**三大痛点，提供了全链路的工程化解决方案。
 
-## ✨ 核心特性
-- **双库架构，动静分离**：使用 PostgreSQL 存储十几万字的财报全量原文与防重日志，使用 Milvus 向量数据库存储高维特征索引，确保检索速度与数据一致性。
-- **混合检索增强 (Hybrid Search)**：结合 BM25 稀疏检索（关键词精准匹配）与 Dense 稠密向量检索（语义理解），极大提升金融专业术语的召回准确率。
-- **流式响应与长文本处理**：采用 Generator 机制切片处理超大 PDF 文件告别 OOM，问答环节支持类似 ChatGPT 的打字机流式输出体验。
-- **开箱即用 (IaC)**：全量代码、环境依赖与网络拓扑均通过 `docker-compose` 编排，实现 `0` 配置秒级部署。
+---
 
-## 🛠️ 技术栈
-- **前端交互**：Streamlit
-- **后端引擎**：FastAPI, Uvicorn
-- **核心算法**：LangChain, Rank-BM25, Jieba
-- **数据存储**：Milvus (向量), PostgreSQL (关系型), MinIO (对象存储)
-- **大模型接入**：阿里云通义千问 (DashScope API)
+## ✨ 核心亮点 (Core Highlights)
 
-## 🚀 极速启动 (Quick Start)
-确保本机已安装 Docker Desktop，在项目根目录执行：
+对于技术评审或面试官，本项目主要展示以下两大核心系统级设计：
+
+### 1. 存储解耦与高级检索架构 (Advanced RAG Architecture)
+* **Parent-Child Chunking (父子块策略)：** 彻底抛弃传统单一向量切分方案。将具有完整语义的大段落（Parent）存入 PostgreSQL，将细粒度切分的子块（Child）向量化存入 Milvus。检索时命中子块，大模型阅读父块。**解决了 RAG 常见的语义截断和上下文丢失问题。**
+* **多路召回与 RRF 融合：** 构建了自研的 `HybridSearchEngine`，实现 Dense (稠密向量相似度) + Sparse (BM25 关键词匹配) 双路召回，并采用 **RRF (倒数排序融合)** 算法合并结果，最后接入 BGE-Reranker 进行重排。**极大提升了专有名词和长尾问题的检索准确率。**
+
+### 2. 消除幻觉的 Agentic 工作流 (Agentic Workflow)
+* **ReAct 范式智能体：** 摒弃死板的链式调用（Chain），基于 `LangGraph` 状态机重构问答链路。让大模型进行自主的“意图识别 -> 工具选择 -> 观察 -> 回答”。
+* **代码沙盒执行 (Python REPL)：** 针对金融场景中“营收同比增长率”、“毛利率利润”等复杂数学计算，大模型极易产生严重幻觉。系统封装了 Python 代码执行沙盒工具，**大模型自主编写代码、自主查询上下文数据并执行计算**，确保了财务数据的 100% 绝对准确。
+
+---
+
+## 🛠 技术栈概览 (Tech Stack)
+
+项目采用了现代化的前后端分离架构与云原生部署方案：
+
+* **🧠 AI / 核心算法侧**
+  * **编排框架:** `LangGraph`, `LangChain` (仅作底层工具类)
+  * **模型基座:** 兼容深求/智谱 API (文本生成), `BGE-m3` (Embedding), `BGE-Reranker` (重排)
+  * **文档解析:** `Docling` / `PyMuPDF` (处理复杂图文混排版面)
+* **⚙️ 后端服务侧**
+  * **Web 框架:** `FastAPI` (全异步非阻塞 IO, `BackgroundTasks` 异步防抖)
+  * **数据校验:** `Pydantic` V2
+  * **ORM 框架:** `SQLAlchemy`
+* **🗄️ 数据库 / 存储侧**
+  * **向量数据库:** `Milvus 2.4` (HNSW 索引，存储高维 Child Chunk)
+  * **关系型数据库:** `PostgreSQL` (存储元数据、MD5 指纹防重、Parent Chunk)
+* **💻 前端与工程化**
+  * **前端交互:** `Streamlit` (流式 SSE 输出响应)
+  * **部署运维:** `Docker`, `Docker Compose` 一键部署
+  * **系统评测:** 基于 `LLM-as-a-judge` 的自动化评测脚本
+
+---
+
+## 🏗 系统架构与核心逻辑 (Architecture)
+
+### 1. 知识入库流 (Data Ingestion Pipeline)
+为了保证企业级系统的数据强一致性，入库流程引入了**防重复校验**与**分布式事务补偿**：
+1. **防重校验:** 上传 PDF 后，首先计算文件 MD5，在 PostgreSQL 中比对，避免同文件重复入库导致检索倾斜。
+2. **切分与向量化:** 采用 Parent-Child 切分策略，调用 BGE-m3 模型提取稠密向量。
+3. **事务补偿机制:** 将大文本落库 Postgres，将向量落库 Milvus。若 Milvus 写入失败，触发 Postgres 数据回滚 (Rollback Orphan Data)，杜绝脏数据。
+
+### 2. 混合检索流 (Hybrid Retrieval Pipeline)
+1. **Query 预处理:** 用户输入问题进行意图重写与关键词提取。
+2. **双路召回:** 
+   - *Vector Search (Milvus):* 获取 Top-K 语义相似子块。
+   - *Keyword Search (BM25):* 获取 Top-K 文本匹配子块。
+3. **RRF 排序:** 通过倒数排序融合公式重塑排序得分。
+4. **重排与溯源 (Reranking):** 送入 Reranker 模型交叉打分，选出 Top-N 子块，并根据 `parent_id` 查出完整的父段落，拼接后送入大模型上下文。
+
+### 3. Agent 调度流 (Agent Routing Pipeline)
+用户提问 -> `LangGraph Router` 节点。
+* 若判断为事实查询 -> 调用 `retriever_tool`。
+* 若判断为财务计算 -> 提取检索数据 -> 调用 `finance_repl` 生成并执行 Python 代码。
+* 汇总数据 -> 结合历史记忆 (Memory) -> 流式输出最终回答。
+
+---
+
+## 🚀 快速启动 (Quick Start)
+
+本项目完全容器化，可通过 Docker Compose 一键拉起所有依赖环境。
+
+### 1. 环境准备
+确保本机已安装 `Docker` 与 `Docker Compose`。
+
+### 2. 克隆与配置
 ```bash
-# 1. 复制环境变量模板并填入大模型 API Key
+git clone [https://github.com/your-username/Finance-RAG.git](https://github.com/your-username/Finance-RAG.git)
+cd Finance-RAG
+# 在根目录创建 .env 文件并填入你的 API Keys
 cp .env.example .env
-
-# 2. 一键拉起微服务全家桶
-docker-compose up -d
