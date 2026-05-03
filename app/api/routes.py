@@ -1,6 +1,23 @@
 #启动命令
 #后端：uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 #milvus：docker-compose up -d
+"""
+专属 RAG 可视化工作站
+🎨 1. 前端交互界面 (Streamlit)
+访问地址: http://localhost:8501
+用途: 这是给最终用户使用的 C 端界面。你可以在这里上传财报 PDF，并直接与大模型进行对话问答。
+🤖 2. 后端 API 控制台 (FastAPI Swagger UI)
+访问地址: http://localhost:8000/docs
+用途: 你的开发调试中心。这里列出了你写的所有后端接口（比如 /upload），你可以直接在这个页面上手动模拟发起 API 请求，查看底层报错或返回值。
+🧠 3. 向量数据库面板 (Milvus Attu)
+访问地址: http://localhost:8002
+用途: 向量计算层的“透视镜”。进入后，你可以看到 finance_reports_v2 表里目前存了多少个子块向量，随时监控底层的检索状态。
+🗄️ 4. 关系型数据库面板 (pgAdmin)
+访问地址: http://localhost:5050
+登录账号: admin@rag.com
+登录密码: admin
+用途: 存储层的“管家”。登录后添加服务器连接到 finance-rag-postgres-v2，你就可以直观地查阅、修改、或删除那十几万字的完整父块原文，以及你的防重复上传日志。
+"""
 
 
 import json

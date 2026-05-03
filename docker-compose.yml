@@ -39,21 +39,18 @@ services:
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/milvus:/var/lib/milvus
     ports:
-      - "19531:19530" # Python 连这个端口
+      - "19531:19530"
       - "9092:9091"
     depends_on:
       - "etcd-v2"
       - "minio-v2"
 
-  # 🌟 新增：新版 Attu 面板
   attu-v2:
     container_name: milvus-attu-v2
     image: zilliz/attu:v2.4.0
     environment:
-      # 注意：在 Docker 内部网络，它直接通过容器名和原始端口 19530 寻找 Milvus
       MILVUS_URL: milvus-standalone-v2:19530
     ports:
-      # 🌟 暴露给本机的 8002 端口 (假设你的旧版本或 FastAPI 在用 8001)  http://localhost:8002
       - "8002:3000"
     depends_on:
       - "standalone-v2"
@@ -73,18 +70,60 @@ services:
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/postgres:/var/lib/postgresql/data
 
-  # 🌟 新增：pgAdmin 可视化管理面板 账号：admin@rag.com 密码:admin
   pgadmin-v2:
     container_name: finance-rag-pgadmin-v2
     image: dpage/pgadmin4
     environment:
-      # 这是你登录 pgAdmin 网页的账号密码
       PGADMIN_DEFAULT_EMAIL: admin@rag.com
       PGADMIN_DEFAULT_PASSWORD: admin
     ports:
-      # 🌟 暴露给本机的 5050 端口  http://localhost:5050
       - "5050:80"
     volumes:
       - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes_v2/pgadmin:/var/lib/pgadmin
     depends_on:
       - "postgres-v2"
+
+  # ==========================================
+  # 3. 核心业务层：FastAPI 后端引擎 🌟 新增
+  # ==========================================
+  backend-v2:
+    container_name: finance-rag-backend-v2
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    ports:
+      - "8000:8000"
+    environment:
+      # ⚠️ 架构师重点：在 Docker 网络里，不能用 127.0.0.1，必须用容器名！
+      - MILVUS_HOST=milvus-standalone-v2
+      - MILVUS_PORT=19530 # 注意：容器内部用回原生 19530
+      - PG_HOST=finance-rag-postgres-v2
+      - PG_PORT=5432      # 容器内部用回原生 5432
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+    env_file:
+      - .env
+    depends_on:
+      - standalone-v2
+      - postgres-v2
+    volumes:
+      - .:/app   # 🌟 关键：冒号左边是本地路径，右边是容器路径
+  # ==========================================
+  # 4. 交互层：Streamlit 页面前端 🌟 新增
+  # ==========================================
+  frontend-v2:
+    container_name: finance-rag-frontend-v2
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # 覆盖 Dockerfile 默认的启动命令，改为拉起 Streamlit
+    command: ["streamlit", "run", "frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    ports:
+      - "8501:8501"
+    environment:
+      # 告诉前端，后端接口的地址在哪里
+      - API_URL=http://finance-rag-backend-v2:8000
+    depends_on:
+      - backend-v2
+    volumes:
+      - .:/app  # 🌟 关键：前端也需要开任意门

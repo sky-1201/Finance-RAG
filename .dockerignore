@@ -1,0 +1,25 @@
+# 1. 忽略环境变量配置（绝对安全红线！）
+.env
+*.env
+
+# 2. 忽略 Git 历史记录
+.git/
+.gitignore
+
+# 3. 忽略 Python 缓存和虚拟环境
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.venv/
+
+# 4. 忽略本地数据库映射文件（防止庞大的旧数据拖慢打包速度，让镜像保持纯净）
+volumes/
+volumes_v2/
+data/
+
+# 5. 忽略本地临时文件或评测数据（视你的实际情况定）
+temp/
+evals/
+*.pdf
