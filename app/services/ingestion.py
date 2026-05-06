@@ -17,9 +17,9 @@ from pymilvus import connections, utility, FieldSchema, CollectionSchema, DataTy
 from app.core.config import settings
 from docling.document_converter import DocumentConverter
 
-# 🌟 新增：引入 Postgres 数据库连接和表模型
+# 引入 Postgres 数据库连接和表模型
 from app.database import SessionLocal, ParentDocument,UploadedFile
-from pypdf import PdfReader  # 如果没有安装，请在终端运行 pip install pypdf
+from pypdf import PdfReader
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +140,7 @@ class DocumentIngestionService:
                 doc_result = self.converter.convert(path)
                 md_text = doc_result.document.export_to_markdown()
 
-            logger.info("✅ PDF 全部解析完毕，内存平稳释放！准备进行文本切分...")
+            logger.info("✅ PDF 全部解析完毕，准备进行文本切分...")
 
             # ==========================================
             # B. 父子块切分与 Metadata 组装
@@ -185,7 +185,7 @@ class DocumentIngestionService:
             # ----------------------------------------------------
             logger.info("📦 开始将完整父块写入 PostgreSQL 存储层...")
             db = SessionLocal()
-            inserted_parent_ids = []  # 🌟 新增：准备一个小本本
+            inserted_parent_ids = []  # 准备一个列表,记录哪些父块写入了 PostgreSQL
             try:
                 postgres_records = []
                 for p_doc in safe_parent_docs:
@@ -195,7 +195,7 @@ class DocumentIngestionService:
                         meta_data=p_doc.metadata
                     )
                     postgres_records.append(record)
-                    inserted_parent_ids.append(p_doc.metadata["parent_id"])  # 🌟 记下 ID
+                    inserted_parent_ids.append(p_doc.metadata["parent_id"])  #  记下 ID
 
                 db.add_all(postgres_records)
                 db.commit()
@@ -267,8 +267,8 @@ class DocumentIngestionService:
             collection.insert(milvus_insert_data)
             collection.flush()
 
-            logger.info("✅ 完美的双库解耦入库完成！计算(Milvus)与存储(Postgres)彻底分离。")
-            # 🌟 新增：所有步骤都成功后，将文件指纹永久登记在案！
+            logger.info("✅ 双库解耦入库完成！计算(Milvus)与存储(Postgres)彻底分离。")
+            # 所有步骤都成功后，将文件指纹存入
             db = SessionLocal()
             try:
                 new_upload = UploadedFile(file_hash=file_md5, file_name=display_name)
@@ -281,29 +281,29 @@ class DocumentIngestionService:
             finally:
                 db.close()
 
-            return {"status": "success", "message": "入库大闭环执行成功！"}
+            return {"status": "success", "message": "入库闭环执行成功！"}
 
-
+        #保证分布式双库的一致性
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {str(e)}")
-            # 🌟🌟🌟 新增：企业级分布式事务补偿机制 (Rollback Orphan Data) 🌟🌟🌟
-            # 如果脚本崩溃了，并且刚才小本本上记了已经写入 Postgres 的 ID
+            #企业级分布式事务补偿机制 (Rollback Orphan Data)
+            # 如果脚本崩溃了，并且刚才列表上记了已经写入 Postgres 的 父块ID
             if 'inserted_parent_ids' in locals() and inserted_parent_ids:
                 logger.warning("⚠️ 检测到后续流程(API/Milvus)崩溃，正在触发补偿事务...")
-                logger.warning(f"🧹 正在从 PostgreSQL 擦除 {len(inserted_parent_ids)} 条孤儿父块数据，以保证双库一致性！")
+                logger.warning(f"🧹 正在从 PostgreSQL 擦除 {len(inserted_parent_ids)} 条父块数据，以保证双库一致性！")
                 db_rollback = SessionLocal()
                 try:
-                    # 拿着小本本上的 ID，去数据库里把它们全删了！
+                    # 拿着列表上的 ID，去数据库里把它们全删了！
                     db_rollback.query(ParentDocument).filter(
                         ParentDocument.id.in_(inserted_parent_ids)
                     ).delete(synchronize_session=False)
                     db_rollback.commit()
                     logger.info("✅ 补偿回滚成功！环境已恢复至入库前的纯净状态。")
                 except Exception as rollback_err:
-                    logger.error(f"❌ 灾难性故障：回滚 PostgreSQL 数据失败: {rollback_err}")
+                    logger.error(f"❌ 故障：回滚 PostgreSQL 数据失败: {rollback_err}")
                 finally:
                     db_rollback.close()
-            raise e  # 最后还是要把原来的错误抛出来，让开发者知道为啥挂了
+            raise e
 
 
 

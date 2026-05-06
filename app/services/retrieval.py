@@ -7,9 +7,9 @@ from langchain_core.documents import Document
 from app.core.config import settings
 from app.services.hybrid_search import HybridSearchEngine
 
-# 🌟 关键：彻底抛弃 langchain_milvus，直接使用原生
+# 彻底抛弃 langchain_milvus，直接使用原生
 from pymilvus import connections, Collection
-# 🌟 新增：引入 Postgres 数据库连接和表模型
+# 引入 Postgres 数据库连接和表模型
 from app.database import SessionLocal, ParentDocument
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class RetrievalService:
             dashscope_api_key=settings.DASHSCOPE_API_KEY
         )
 
-        # 🌟 彻底抛弃 LangChain Milvus，直接用纯原生连库！
+        # 抛弃 LangChain Milvus，直接用纯原生连库
         try:
             connections.connect(
                 alias="default",
@@ -34,13 +34,16 @@ class RetrievalService:
         except Exception as e:
             logger.warning(f"⚠️ PyMilvus 连接复用提示: {e}")
 
-        # 🌟 初始化原生 Collection 并加载到内存（Milvus 搜索前必须 load）
+        # 初始化原生 Collection 并加载到内存（Milvus 搜索前必须 load）
         self.collection = Collection(settings.COLLECTION_NAME)
         self.collection.load()
-        logger.info("📦 Milvus 数据表已成功加载到内存，随时可以检索。")
+        logger.info(" Milvus 数据表已成功加载到内存，随时可以检索。")
 
     def _retrieve_child_chunks(self, query: str, company: Optional[str], year: Optional[str], top_k: int = 10) -> List[
         Document]:
+        """
+        通过向量检索再Milvus数数据库检索出子块
+        """
         # 原生 JSON 字段过滤语法
         expr_parts = ['metadata["doc_level"] == "child"']
         if company:
@@ -54,10 +57,10 @@ class RetrievalService:
         try:
             query_vector = self.embeddings.embed_query(query)
 
-            # 🌟 核心修复 1：每次检索前强制同步硬盘最新数据进内存！
+            #每次检索前强制同步硬盘最新数据进内存！
             self.collection.load()
 
-            # 🌟 原生向量检索
+            # 向量检索
             results = self.collection.search(
                 data=[query_vector],
                 anns_field="vector",
@@ -81,13 +84,13 @@ class RetrievalService:
 
     def _fetch_parent_chunks(self, child_docs: list) -> list:
         """
-        核心架构变动：通过 parent_id 从 PostgreSQL 中极速提取完整父块
+        通过 parent_id 从 PostgreSQL 中极速提取完整父块
         """
         if not child_docs:
             return []
 
         # 1. 提取并去重所有的 parent_id
-        # 使用 set() 极其重要，防止多个子块命中同一个父块导致重复查询
+        # 使用 set(),防止多个子块命中同一个父块导致重复查询
         parent_ids = list(set([
             doc.metadata.get("parent_id")
             for doc in child_docs
@@ -98,13 +101,13 @@ class RetrievalService:
             logger.warning("⚠️ 命中的子块中没有找到 parent_id！")
             return []
 
-        logger.info(f"🔗 正在从 PostgreSQL 中极速提取 {len(parent_ids)} 个完整父块...")
+        logger.info(f" 正在从 PostgreSQL 中提取 {len(parent_ids)} 个完整父块...")
 
         # 2. 连接 PostgreSQL 并发起批量查询
         db = SessionLocal()
         parent_docs = []
         try:
-            # 🌟 这一句 SQL 魔法：SELECT * FROM parent_documents WHERE id IN (...)
+            # SELECT * FROM parent_documents WHERE id IN (...)
             records = db.query(ParentDocument).filter(ParentDocument.id.in_(parent_ids)).all()
 
             # 3. 将查出的数据库记录，重新封装成 LangChain 能认的 Document 对象
@@ -120,7 +123,7 @@ class RetrievalService:
         except Exception as e:
             logger.error(f"❌ PostgreSQL 查询失败: {str(e)}")
         finally:
-            db.close()  # 养成好习惯，查询完毕关闭连接
+            db.close()
 
         return parent_docs
 
@@ -128,7 +131,7 @@ class RetrievalService:
         if not docs:
             return []
 
-        logger.info(f"⚖️ 开始对 {len(docs)} 个完整父块进行 Rerank 重排序...")
+        logger.info(f" 开始对 {len(docs)} 个完整父块进行 Rerank 重排序...")
         doc_texts = [doc.page_content for doc in docs]
 
         try:
@@ -170,7 +173,7 @@ class RetrievalService:
         expr = " and ".join(expr_parts)
 
         try:
-            # 使用标量 query 极速拉取所有符合条件的子块
+            # 使用标量 query 拉取所有符合条件的子块
             results = self.collection.query(
                 expr=expr,
                 output_fields=["text", "metadata"],
