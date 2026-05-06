@@ -26,14 +26,14 @@ Base = declarative_base()
 
 # 定义父块的数据库表
 class ParentDocument(Base):
-    __tablename__ = "parent_documents"
+    __tablename__ = "parent_documents_v3"
     id = Column(String, primary_key=True, index=True)
     content = Column(Text, nullable=False)
     meta_data = Column("metadata", JSONB)
 
 # 🌟 新增：文件上传去重登记表
 class UploadedFile(Base):
-    __tablename__ = "uploaded_files"
+    __tablename__ = "uploaded_files_v3"
 
     # 将文件的 MD5 哈希值作为主键（绝对唯一）
     file_hash = Column(String, primary_key=True, index=True)

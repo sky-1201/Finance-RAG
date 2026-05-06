@@ -1,5 +1,4 @@
 import logging
-import json
 import dashscope
 from typing import List, Optional
 from langchain_community.embeddings import DashScopeEmbeddings
@@ -7,12 +6,11 @@ from langchain_core.documents import Document
 from app.core.config import settings
 from app.services.hybrid_search import HybridSearchEngine
 
-# 彻底抛弃 langchain_milvus，直接使用原生
 from pymilvus import connections, Collection
-# 引入 Postgres 数据库连接和表模型
 from app.database import SessionLocal, ParentDocument
 
 logger = logging.getLogger(__name__)
+
 
 class RetrievalService:
     def __init__(self):
@@ -23,7 +21,6 @@ class RetrievalService:
             dashscope_api_key=settings.DASHSCOPE_API_KEY
         )
 
-        # 抛弃 LangChain Milvus，直接用纯原生连库
         try:
             connections.connect(
                 alias="default",
@@ -34,63 +31,18 @@ class RetrievalService:
         except Exception as e:
             logger.warning(f"⚠️ PyMilvus 连接复用提示: {e}")
 
-        # 初始化原生 Collection 并加载到内存（Milvus 搜索前必须 load）
         self.collection = Collection(settings.COLLECTION_NAME)
         self.collection.load()
-        logger.info(" Milvus 数据表已成功加载到内存，随时可以检索。")
+        logger.info("📦 Milvus 数据表已成功加载到内存，随时可以检索。")
 
-    def _retrieve_child_chunks(self, query: str, company: Optional[str], year: Optional[str], top_k: int = 10) -> List[
-        Document]:
-        """
-        通过向量检索再Milvus数数据库检索出子块
-        """
-        # 原生 JSON 字段过滤语法
-        expr_parts = ['metadata["doc_level"] == "child"']
-        if company:
-            expr_parts.append(f'metadata["company"] == "{company}"')
-        if year:
-            expr_parts.append(f'metadata["year"] == "{year}"')
-
-        expr = " and ".join(expr_parts)
-        logger.info(f"🔎 执行原生子块检索 | 表达式: {expr}")
-
-        try:
-            query_vector = self.embeddings.embed_query(query)
-
-            #每次检索前强制同步硬盘最新数据进内存！
-            self.collection.load()
-
-            # 向量检索
-            results = self.collection.search(
-                data=[query_vector],
-                anns_field="vector",
-                param={"metric_type": "L2", "params": {}},
-                limit=top_k,
-                expr=expr,
-                output_fields=["text", "metadata"]
-            )
-
-            docs = []
-            # results[0] 对应的是我们传入的唯一一个查询向量的命中结果
-            for hit in results[0]:
-                text = hit.entity.get("text")
-                meta = hit.entity.get("metadata", {})
-                docs.append(Document(page_content=text, metadata=meta))
-
-            return docs
-        except Exception as e:
-            logger.error(f"❌ 子块检索失败: {str(e)}", exc_info=True)
-            return []
+        # 🌟 实例化全新的双路检索引擎
+        self.hybrid_engine = HybridSearchEngine()
 
     def _fetch_parent_chunks(self, child_docs: list) -> list:
-        """
-        通过 parent_id 从 PostgreSQL 中极速提取完整父块
-        """
+        """从 PostgreSQL 中极速提取完整父块 (此方法极为优秀，原样保留)"""
         if not child_docs:
             return []
 
-        # 1. 提取并去重所有的 parent_id
-        # 使用 set(),防止多个子块命中同一个父块导致重复查询
         parent_ids = list(set([
             doc.metadata.get("parent_id")
             for doc in child_docs
@@ -101,25 +53,17 @@ class RetrievalService:
             logger.warning("⚠️ 命中的子块中没有找到 parent_id！")
             return []
 
-        logger.info(f" 正在从 PostgreSQL 中提取 {len(parent_ids)} 个完整父块...")
-
-        # 2. 连接 PostgreSQL 并发起批量查询
+        logger.info(f"🔗 正在从 PostgreSQL 中提取 {len(parent_ids)} 个完整父块...")
         db = SessionLocal()
         parent_docs = []
         try:
-            # SELECT * FROM parent_documents WHERE id IN (...)
             records = db.query(ParentDocument).filter(ParentDocument.id.in_(parent_ids)).all()
-
-            # 3. 将查出的数据库记录，重新封装成 LangChain 能认的 Document 对象
             for record in records:
-                # 注意：因为数据库里存了 JSONB，这里拿出来直接就是字典，非常优雅
                 parent_docs.append(Document(
                     page_content=record.content,
                     metadata=record.meta_data or {}
                 ))
-
             logger.info(f"✅ 成功提取 {len(parent_docs)} 个父块，即将送入 Reranker 重排！")
-
         except Exception as e:
             logger.error(f"❌ PostgreSQL 查询失败: {str(e)}")
         finally:
@@ -128,10 +72,11 @@ class RetrievalService:
         return parent_docs
 
     def _rerank_documents(self, query: str, docs: List[Document], top_n: int = 3) -> List[Document]:
+        """大模型重排序 (此方法原样保留)"""
         if not docs:
             return []
 
-        logger.info(f" 开始对 {len(docs)} 个完整父块进行 Rerank 重排序...")
+        logger.info(f"⚖️ 开始对 {len(docs)} 个完整父块进行 Rerank 重排序...")
         doc_texts = [doc.page_content for doc in docs]
 
         try:
@@ -157,76 +102,57 @@ class RetrievalService:
             else:
                 logger.error(f"❌ Rerank API 调用失败: 状态码 {response.status_code}, {response.message}")
                 return docs[:top_n]
-
         except Exception as e:
             logger.error(f"❌ Rerank 过程发生异常: {str(e)}", exc_info=True)
             return docs[:top_n]
 
-    def _fetch_all_child_chunks_for_bm25(self, company: Optional[str], year: Optional[str]) -> List[dict]:
-        """将特定公司/年份的所有子块拉入内存，构建全局 BM25 候选池"""
-        expr_parts = ['metadata["doc_level"] == "child"']
-        if company:
-            expr_parts.append(f'metadata["company"] == "{company}"')
-        if year:
-            expr_parts.append(f'metadata["year"] == "{year}"')
-
-        expr = " and ".join(expr_parts)
-
-        try:
-            # 使用标量 query 拉取所有符合条件的子块
-            results = self.collection.query(
-                expr=expr,
-                output_fields=["text", "metadata"],
-                limit=16384  # 设置一个足够大的值，确保拉出该财报所有子块
-            )
-            return results
-        except Exception as e:
-            logger.error(f"❌ 拉取全量子块构建 BM25 索引失败: {str(e)}")
-            return []
-
     def run_pipeline(self, query: str, company: Optional[str] = None, year: Optional[str] = None,
                      final_top_n: int = 3) -> List[Document]:
         try:
-            hybrid_engine = HybridSearchEngine()
+            # =======================================================
+            # 🟢 阶段 1：生成过滤表达式与 Dense 向量
+            # =======================================================
+            expr_parts = ['metadata["doc_level"] == "child"']
+            if company:
+                expr_parts.append(f'metadata["company"] == "{company}"')
+            if year:
+                expr_parts.append(f'metadata["year"] == "{year}"')
+            expr = " and ".join(expr_parts)
+
+            # 调用大模型生成查询的 Dense 向量
+            query_dense_vec = self.embeddings.embed_query(query)
 
             # =======================================================
-            # 🟢 第一阶段：并行双路召回 (目标：子块)
+            # 🟣 阶段 2：Milvus 底层双路原生召回 + RRF 融合
             # =======================================================
-            # 1. 向量路 (Dense)：捞取语义相关的 Top 60 子块
-            logger.info("👉 启动路 1：向量检索...")
-            dense_child_docs = self._retrieve_child_chunks(query, company, year, top_k=60)
-            # 转换成 dict 格式以适配 RRF
-            dense_results = [{"text": doc.page_content, "metadata": doc.metadata} for doc in dense_child_docs]
+            self.collection.load()  # 确保最新数据都在内存中
+            logger.info(f"👉 执行 Milvus 底层原生双路召回与 RRF 融合 | 表达式: {expr}")
 
-            # 2. 关键词路 (Sparse/BM25)：捞取字面匹配的 Top 30 子块
-            logger.info("👉 启动路 2：全局内存 BM25 检索...")
-            all_corpus_dicts = self._fetch_all_child_chunks_for_bm25(company, year)
-            bm25_results = hybrid_engine.execute_bm25_search(
+            hybrid_results = self.hybrid_engine.execute_search(
                 query=query,
-                document_pool=all_corpus_dicts,
-                top_n=30
+                query_dense_vec=query_dense_vec,
+                collection=self.collection,
+                expr=expr,
+                top_k=15  # 只要最终融合出的前 15 个“极品子块”
             )
 
-            # =======================================================
-            # 🟣 第二阶段：RRF 子块融合打分
-            # =======================================================
-            logger.info("👉 阶段 2：执行 RRF 双路子块融合...")
-            fused_dicts = hybrid_engine.compute_rrf(dense_results, bm25_results)
+            # 转换回 LangChain 认的 Document 格式
+            top_fused_docs = [Document(page_content=d["text"], metadata=d["metadata"]) for d in hybrid_results]
 
-            # 提取融合后得分最高的前 15 个“极品子块”
-            top_fused_dicts = fused_dicts[:15]
-            top_fused_docs = [Document(page_content=d["text"], metadata=d["metadata"]) for d in top_fused_dicts]
+            if not top_fused_docs:
+                logger.warning("⚠️ 底层双路召回未找到任何匹配子块！")
+                return []
 
             # =======================================================
-            # 🟠 第三阶段：顺藤摸瓜找父块 (防收敛黑洞)
+            # 🟠 阶段 3：顺藤摸瓜找完整父块
             # =======================================================
             logger.info("👉 阶段 3：基于最优子块，提取完整父块...")
-            # 因为我们提供的子块既有语义强的，又有关键词强的，映射出的父块质量极高
             parent_docs = self._fetch_parent_chunks(top_fused_docs)
 
             # =======================================================
-            # 🔴 第四阶段：大模型终极重排
+            # 🔴 阶段 4：大模型终极重排
             # =======================================================
+            logger.info("👉 阶段 4：大模型终极重排...")
             final_docs = self._rerank_documents(query, parent_docs, top_n=final_top_n)
 
             return final_docs

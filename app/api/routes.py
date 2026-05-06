@@ -1,6 +1,7 @@
 #启动命令
 #后端：uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 #milvus：docker-compose up -d
+#只启动数据库：docker-compose up -d postgres-v2 standalone-v2 etcd-v2 minio-v2 attu-v2 pgadmin-v2
 """
 专属 RAG 可视化工作站
 🎨 1. 前端交互界面 (Streamlit)

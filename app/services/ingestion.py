@@ -11,7 +11,10 @@ from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_core.documents import Document
 
 # Milvus 原生包
-from pymilvus import connections, utility, FieldSchema, CollectionSchema, DataType, Collection
+from pymilvus import connections, utility
+from pymilvus import CollectionSchema, FieldSchema, DataType, Collection
+import jieba
+from pymilvus.model.sparse import BM25EmbeddingFunction
 
 # 自定义组件
 from app.core.config import settings
@@ -104,7 +107,7 @@ class DocumentIngestionService:
                 db.close() # 查完赶紧关门
 
             # ==========================================
-            # A. 解析 PDF (Docling) - 🌟 内存保护：分块流式解析
+            # A. 解析 PDF (Docling) -  内存保护：分块流式解析
             # ==========================================
             logger.info(f"Step 1: 启动内存安全模式 Parsing PDF {display_name}...")
 
@@ -224,29 +227,56 @@ class DocumentIngestionService:
             collection_name = settings.COLLECTION_NAME
 
             if not utility.has_collection(collection_name):
-                logger.info(f"📦 Collection '{collection_name}' 不存在，正在创建表结构...")
+                logger.info(f" Collection '{collection_name}' 不存在，正在创建双路检索表结构...")
+
+                # 1. 定义表结构
                 fields = [
-                    FieldSchema(name="pk", dtype=DataType.INT64, is_primary=True, auto_id=True),
+                    FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, is_primary=True, max_length=65535),
                     FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
-                    FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=1024),
+                    # 密集向量
+                    FieldSchema(name="dense_vector", dtype=DataType.FLOAT_VECTOR, dim=1024),
+                    # 稀疏向量列 (自动处理不定长词频)
+                    FieldSchema(name="sparse_vector", dtype=DataType.SPARSE_FLOAT_VECTOR),
                     FieldSchema(name="metadata", dtype=DataType.JSON)
                 ]
-                schema = CollectionSchema(fields, "Financial RAG Document Store", enable_dynamic_field=True)
+                schema = CollectionSchema(fields, "Financial RAG Document Store (Hybrid Search)",
+                                          enable_dynamic_field=True)
                 collection = Collection(collection_name, schema)
 
-                index_params = {
-                    "index_type": "AUTOINDEX",
-                    "metric_type": "L2",
+                # ==========================================
+                # 为两路向量分别建立专属索引
+                # ==========================================
+
+                # 2. 为密集向量建索引
+                logger.info("⚙️ 正在创建 Dense 密集向量索引...")
+                dense_index_params = {
+                    "index_type": "AUTOINDEX",  # 也可以用 "HNSW"
+                    "metric_type": "L2",  # L2 或 COSINE
                     "params": {}
                 }
-                collection.create_index("vector", index_params)
-                logger.info("📦 表和向量索引创建完成！")
+                collection.create_index("dense_vector", dense_index_params)
+
+                # 3. 为稀疏向量建专用的倒排索引
+                logger.info("⚙️ 正在创建 Sparse 稀疏向量专用倒排索引...")
+                sparse_index_params = {
+                    "index_type": "SPARSE_INVERTED_INDEX",  #  强制规定：稀疏向量只能用这个索引类型
+                    "metric_type": "IP",  #  强制规定：稀疏向量的匹配只能用内积 (Inner Product)
+                    "params": {"drop_ratio_build": 0.2}  # 丢弃 20% 低频无意义的词，可大幅节省内存
+                }
+                collection.create_index("sparse_vector", sparse_index_params)
+
+                logger.info("🎉 表结构和双路向量索引全部创建完成！")
             else:
                 collection = Collection(collection_name)
 
             # --- 对子块进行真实的 Embedding ---
             logger.info(f"⏳ 正在向 API 请求 {len(child_docs)} 个子块向量...")
             child_texts = [doc.page_content for doc in child_docs]
+
+            #必须为每个子块生成唯一的主键 chunk_id
+            child_ids = [str(uuid.uuid4()) for _ in child_docs]
+
+            # 【第 1 路】：请求云端 API 生成密集向量 (Dense Vector)
             child_embeddings = []
             batch_size = 10
 
@@ -257,13 +287,24 @@ class DocumentIngestionService:
                 batch_embeddings = self.embeddings.embed_documents(batch_texts_for_embed)
                 child_embeddings.extend(batch_embeddings)
 
-            # 组装并原生插入 Milvus（注意：现在只有子块了，不再需要“假向量”逻辑）
+            # 【第 2 路】：在本地极速生成稀疏向量 (Sparse Vector)
+            logger.info(f" 正在本地计算 {len(child_docs)} 个子块的 BM25 稀疏向量...")
+            analyzer = BM25EmbeddingFunction(analyzer=jieba.lcut)
+            # 拟合当前文档的词频
+            analyzer.fit(child_texts)
+            # 编码出稀疏矩阵 (包含词的 ID 和权重)
+            sparse_embeddings = analyzer.encode_documents(child_texts)
+
+            # 🌟 修正2：组装并原生插入 Milvus（必须与你上面的 FieldSchema 顺序和数量严格一致！）
             milvus_insert_data = [
-                child_texts,  # 文本列
-                child_embeddings,  # 向量列
-                [doc.metadata for doc in child_docs]  # 元数据列 (包含 parent_id)
+                child_ids,  # 第1列: chunk_id (主键)
+                child_texts,  # 第2列: text
+                child_embeddings,  # 第3列: dense_vector
+                sparse_embeddings,  # 第4列: sparse_vector
+                [doc.metadata for doc in child_docs]  # 第5列: metadata (包含 parent_id)
             ]
 
+            logger.info("📦 正在向 Milvus 双路向量库写入数据...")
             collection.insert(milvus_insert_data)
             collection.flush()
 

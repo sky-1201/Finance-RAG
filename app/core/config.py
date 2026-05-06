@@ -12,11 +12,11 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "text-embedding-v4"  # 阿里最新的大模型嵌入 API
     LLM_MODEL: str = "qwen-max"
 
-    # --- Milvus 向量库配置 ---
-    MILVUS_URI: str = "./data/milvus_financial.db"  # 本地测试使用轻量级 Lite
+    # --- Milvus 向量库配置 (Docker Standalone 模式) ---
+    # 删除了废弃的 MILVUS_URI 本地文件模式
     MILVUS_HOST: str = "127.0.0.1"
     MILVUS_PORT: str = "19531"
-    COLLECTION_NAME: str = "financial_reports_parent_child"
+    COLLECTION_NAME: str = "finance_reports_v3"
 
     # --- Chunking 策略配置 (即将用到) ---
     CHUNK_SIZE: int = 500
