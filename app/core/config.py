@@ -1,5 +1,10 @@
 import logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
+from dotenv import load_dotenv
+
+# 加载 .env 文件（如果有的话）
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -11,11 +16,18 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY: str  # 必须在 .env 中配置，否则启动报错
     EMBEDDING_MODEL: str = "text-embedding-v4"  # 阿里最新的大模型嵌入 API
     LLM_MODEL: str = "qwen-max"
-
-    # --- Milvus 向量库配置 (Docker Standalone 模式) ---
+    """
+    # --- Milvus 向量库配置 (Docker Standalone 模式) ---本地后端模式
     MILVUS_HOST: str = "127.0.0.1"
     MILVUS_PORT: str = "19531"
     COLLECTION_NAME: str = "finance_reports_v3"
+    """
+
+    # --- Milvus 向量库配置 ---
+    # 优先从环境变量读取，如果没有，再默认使用本地的 127.0.0.1
+    MILVUS_HOST: str = os.getenv("MILVUS_HOST", "127.0.0.1")
+    MILVUS_PORT: str = os.getenv("MILVUS_PORT", "19530")  # 注意：这里默认最好也填原生的 19530
+    COLLECTION_NAME: str = os.getenv("COLLECTION_NAME", "finance_reports_v3")
 
     # --- Chunking 策略配置
     CHUNK_SIZE: int = 500
