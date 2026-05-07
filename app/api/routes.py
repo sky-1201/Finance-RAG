@@ -1,6 +1,7 @@
 #启动命令
 #后端：uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 #milvus：docker-compose up -d
+#只启动数据库：docker-compose up -d postgres-v2 standalone-v2 etcd-v2 minio-v2 attu-v2 pgadmin-v2
 """
 专属 RAG 可视化工作站
 🎨 1. 前端交互界面 (Streamlit)
@@ -18,7 +19,6 @@
 登录密码: admin
 用途: 存储层的“管家”。登录后添加服务器连接到 finance-rag-postgres-v2，你就可以直观地查阅、修改、或删除那十几万字的完整父块原文，以及你的防重复上传日志。
 """
-
 
 import json
 import logging
@@ -48,6 +48,7 @@ agent_service = FinancialAgentService()
 async def chat_stream_endpoint(request: ChatRequest):
     logger.info(f"🌐 API 接收到流式请求: {request.query}")
 
+
     async def event_generator():
         try:
             async for event in agent_service.agent_executor.astream_events(
@@ -59,14 +60,14 @@ async def chat_stream_endpoint(request: ChatRequest):
                     },
                     version="v2"
             ):
-                if event["event"] == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"].content
+                if event["event"] == "on_chat_model_stream":  #"event": "on_chat_model_stream",  事件类型（这是你最关心的）
+                    chunk = event["data"]["chunk"].content    #"data": {"chunk": <AIMessageChunk content="营收"> }实际的数据载荷
                     if chunk:
                         yield f"data: {json.dumps({'chunk': chunk})}\n\n"
 
                 # 🌟 捕获工具调用，给前端发送"思考中"的状态
                 elif event["event"] == "on_tool_start":
-                    tool_name = event["name"]
+                    tool_name = event["name"]   #"name": "ChatOpenAI",  谁发出的事件（比如大模型，或者某个工具）
                     if tool_name == "financial_retriever_tool":
                         msg = "\n\n> 🔍 **[Agent 思考中]** 正在查阅 Milvus 知识库...\n\n"
                         yield f"data: {json.dumps({'chunk': msg})}\n\n"
@@ -92,7 +93,7 @@ def process_and_ingest_document(file_path: str, original_filename: str):
     logger.info(f"⏳ 后台任务开始：处理文件 {original_filename}")
     try:
         ingestion_service = DocumentIngestionService()
-        # 🌟 此处的 page_range=(1, 5) 用于本地防炸内存测试。若要解析全本，将其改为 None 或删掉该参数即可。
+        #此处的 page_range=(1, 5) 用于本地防炸内存测试。若要解析全本，将其改为 None 或删掉该参数即可。
         ingestion_service.run_pipeline(
             pdf_path=file_path,
             original_filename=original_filename,

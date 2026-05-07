@@ -15,7 +15,8 @@ docling>=1.16.0                # 核心解析器，精准提取 PDF 表格与 Ma
 pypdf>=3.17.0                  # 轻量级 PDF 页数读取工具，用于 OOM 防御
 
 # 3. 向量数据库与 Embedding (Storage)
-pymilvus>=2.4.0                # Milvus 官方 Python SDK (与 v2.4.0 容器对齐)
+pymilvus[model]>=2.4.0         # 必须加上 [model] 后缀，以支持本地直接计算 BM25 稀疏向量
+jieba>=0.42.1                  # 用于给 BM25 提供精确的中文切词支持
 
 # 4. 后端服务化 (FastAPI Backend)
 fastapi>=0.110.1               # 异步 Web 框架
@@ -38,7 +39,6 @@ SQLAlchemy==2.0.29
 psycopg2-binary==2.9.9         # 专为容器环境准备的二进制驱动，无需编译
 
 # 8. 检索算法与分词库 (双路召回依赖)
-jieba>=0.42.1
 rank-bm25>=0.2.2
 
 # 9. Agent 编排框架与文本处理

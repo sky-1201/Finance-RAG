@@ -1,87 +1,73 @@
+import logging
 import jieba
-import numpy as np
-from rank_bm25 import BM25Okapi
 from typing import List, Dict
+from pymilvus import AnnSearchRequest, RRFRanker
+from pymilvus.model.sparse import BM25EmbeddingFunction
+
+logger = logging.getLogger(__name__)
 
 
 class HybridSearchEngine:
-    def __init__(self, k_dense: int = 60, k_bm25: int = 40):
-        # 初始化双路各自召回的数量 (可以多捞一点，反正后面会做 RRF 融合)
-        self.k_dense = k_dense
-        self.k_bm25 = k_bm25
+    def __init__(self):
+        logger.info("🔌 初始化 Milvus 原生双路检索引擎...")
+        # 这里的 BM25 引擎不再需要存储海量数据，它仅用于把用户的 Query 切词转化为稀疏矩阵
+        self.analyzer = BM25EmbeddingFunction(analyzer=jieba.lcut)
 
-    def _tokenize(self, text: str) -> List[str]:
-        """使用结巴分词对中文进行精准切词"""
-        return list(jieba.cut_for_search(text))
-
-    def compute_rrf(self, dense_results: List[Dict], bm25_results: List[Dict], rrf_k: int = 60) -> List[Dict]:
+    def execute_search(self, query: str, query_dense_vec: list, collection, expr: str, top_k: int = 15) -> List[Dict]:
         """
-        核心算法：倒数排序融合 (Reciprocal Rank Fusion)
-        参数:
-            dense_results: 向量检索回来的带 text 的字典列表
-            bm25_results: BM25 检索回来的带 text 的字典列表
-            rrf_k: 缓解常数，业界通常设置为 60
+        组装双路请求，并直接交由 Milvus 数据库底层完成并行召回与 RRF 融合
         """
-        # 用一个字典来记录每个文本块的 RRF 得分
-        # 我们用 chunk 的文本本身 (或 ID) 作为主键去重
-        rrf_scores = {}
-        combined_results_map = {}
+        # 1. 瞬间生成用户 Query 的稀疏向量矩阵
+        query_sparse_matrix = self.analyzer.encode_queries([query])
 
-        # 1. 计算 Dense 向量的 RRF 得分
-        for rank, doc in enumerate(dense_results):
-            text = doc.get("text", "")
-            if text not in rrf_scores:
-                rrf_scores[text] = 0.0
-                combined_results_map[text] = doc
-            # RRF 公式核心：1 / (rank + 1 + rrf_k)
-            rrf_scores[text] += 1.0 / (rank + 1 + rrf_k)
+        # 🌟 核心终极修复 (兼容所有版本 SciPy):
+        # 直接读取底层 C 语言数组的指针 (indptr) 和数据 (data)，完美避开版本差异，速度达到极致！
+        sparse_dict_list = []
+        for i in range(query_sparse_matrix.shape[0]):
+            # 找到第 i 行在底层一维数组中的起止位置
+            start_idx = query_sparse_matrix.indptr[i]
+            end_idx = query_sparse_matrix.indptr[i + 1]
 
-        # 2. 计算 BM25 的 RRF 得分
-        for rank, doc in enumerate(bm25_results):
-            text = doc.get("text", "")
-            if text not in rrf_scores:
-                rrf_scores[text] = 0.0
-                combined_results_map[text] = doc
-            rrf_scores[text] += 1.0 / (rank + 1 + rrf_k)
+            # 直接切片取出词的 ID 列表和对应的权重列表
+            indices = query_sparse_matrix.indices[start_idx:end_idx]
+            values = query_sparse_matrix.data[start_idx:end_idx]
 
-        # 3. 按最终的 RRF 得分降序排列
-        sorted_results = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+            # 瞬间拼装成 Milvus 唯一认准的字典格式
+            sparse_dict_list.append({int(k): float(v) for k, v in zip(indices, values)})
 
-        # 4. 组装返回结果
-        final_list = []
-        for text, score in sorted_results:
-            doc_data = combined_results_map[text]
-            doc_data["rrf_score"] = score  # 记录一下分数方便我们调试
-            final_list.append(doc_data)
+        # 2. 构建 Dense (语义) 召回请求
+        req_dense = AnnSearchRequest(
+            data=[query_dense_vec],
+            anns_field="dense_vector",
+            param={"metric_type": "L2"},
+            limit=60,
+            expr=expr
+        )
 
-        return final_list
+        # 3. 构建 Sparse (字面量 BM25) 召回请求
+        req_sparse = AnnSearchRequest(
+            data=sparse_dict_list,  # 直接传入转化好的完美字典列表
+            anns_field="sparse_vector",
+            param={"metric_type": "IP"},
+            limit=40,
+            expr=expr
+        )
 
-    def execute_bm25_search(self, query: str, document_pool: List[Dict], top_n: int = 15) -> List[Dict]:
-        """
-        在内存中对全量或局部文档池执行极速 BM25 检索
-        """
-        if not document_pool:
-            return []
+        # 4. 🌟 召唤奇迹：底层 C++ 极速原生融合
+        results = collection.hybrid_search(
+            reqs=[req_dense, req_sparse],
+            rerank=RRFRanker(k=60),
+            limit=top_k,
+            output_fields=["text", "metadata"]
+        )
 
-        # 把文档池中的文本抽出来进行分词
-        tokenized_corpus = [self._tokenize(doc.get("text", "")) for doc in document_pool]
+        # 5. 组装结果返回给外层
+        final_docs = []
+        for hit in results[0]:  # results[0] 对应唯一的 query
+            final_docs.append({
+                "text": hit.entity.get("text"),
+                "metadata": hit.entity.get("metadata", {}),
+                "score": hit.distance  # 底层 RRF 给出的最终排名分
+            })
 
-        # 构建 BM25 倒排索引
-        bm25 = BM25Okapi(tokenized_corpus)
-
-        # 对查询词进行相同的分词
-        tokenized_query = self._tokenize(query)
-
-        # 批量打分
-        doc_scores = bm25.get_scores(tokenized_query)
-
-        # 获取 Top-N 索引
-        top_indices = np.argsort(doc_scores)[::-1][:top_n]
-
-        # 返回对应的原始文档 (过滤掉得分为0的垃圾匹配)
-        results = []
-        for idx in top_indices:
-            if doc_scores[idx] > 0:
-                results.append(document_pool[idx])
-
-        return results
+        return final_docs
