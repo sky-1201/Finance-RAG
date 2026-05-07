@@ -51,7 +51,6 @@ def setup_global_logger() -> None:
         logging.info("✅ 全局日志系统初始化完成。")
 
     except Exception as e:
-        # 如果日志系统本身启动失败，只能用 print 抢救一下了
         print(f"❌ 初始化全局日志系统失败: {str(e)}")
 
 

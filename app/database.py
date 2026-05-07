@@ -31,7 +31,7 @@ class ParentDocument(Base):
     content = Column(Text, nullable=False)
     meta_data = Column("metadata", JSONB)
 
-# 🌟 新增：文件上传去重登记表
+# 文件上传去重登记表
 class UploadedFile(Base):
     __tablename__ = "uploaded_files_v3"
 

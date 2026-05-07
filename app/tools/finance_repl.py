@@ -5,7 +5,6 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
-# 🌟 拿掉 async，恢复为普通的 def
 @tool
 def python_repl_tool(code: str) -> str:
     """

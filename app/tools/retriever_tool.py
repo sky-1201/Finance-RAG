@@ -4,7 +4,7 @@ from app.services.retrieval import RetrievalService
 
 logger = logging.getLogger(__name__)
 
-# 恢复为延迟加载，避开 FastAPI 启动时的扫描风暴
+
 _retriever_service = None
 
 
@@ -20,7 +20,7 @@ def financial_retriever_tool(query: str, company: str = None, year: str = None) 
     返回：
     包含上下文片段的纯文本，请仔细阅读返回的文本以提取事实。
     """
-    # 🌟 关键：把日志放在第一行！这样就算下面卡死，我们也能看到工具已经启动。
+
     logger.info(f"🛠️ Agent 决定调用检索工具 | 搜索词: {query} | 公司: {company} | 年份: {year}")
 
     global _retriever_service

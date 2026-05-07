@@ -35,7 +35,7 @@ class RetrievalService:
         self.collection.load()
         logger.info("📦 Milvus 数据表已成功加载到内存，随时可以检索。")
 
-        # 🌟 实例化全新的双路检索引擎
+        #  实例化全新的双路检索引擎
         self.hybrid_engine = HybridSearchEngine()
 
     def _fetch_parent_chunks(self, child_docs: list) -> list:
@@ -110,7 +110,7 @@ class RetrievalService:
                      final_top_n: int = 3) -> List[Document]:
         try:
             # =======================================================
-            # 🟢 阶段 1：生成过滤表达式与 Dense 向量
+            #  阶段 1：生成过滤表达式与 Dense 向量
             # =======================================================
             expr_parts = ['metadata["doc_level"] == "child"']
             if company:
@@ -123,7 +123,7 @@ class RetrievalService:
             query_dense_vec = self.embeddings.embed_query(query)
 
             # =======================================================
-            # 🟣 阶段 2：Milvus 底层双路原生召回 + RRF 融合
+            #  阶段 2：Milvus 底层双路原生召回 + RRF 融合
             # =======================================================
             self.collection.load()  # 确保最新数据都在内存中
             logger.info(f"👉 执行 Milvus 底层原生双路召回与 RRF 融合 | 表达式: {expr}")
@@ -144,13 +144,13 @@ class RetrievalService:
                 return []
 
             # =======================================================
-            # 🟠 阶段 3：顺藤摸瓜找完整父块
+            #  阶段 3：顺藤摸瓜找完整父块
             # =======================================================
             logger.info("👉 阶段 3：基于最优子块，提取完整父块...")
             parent_docs = self._fetch_parent_chunks(top_fused_docs)
 
             # =======================================================
-            # 🔴 阶段 4：大模型终极重排
+            #  阶段 4：大模型重排
             # =======================================================
             logger.info("👉 阶段 4：大模型终极重排...")
             final_docs = self._rerank_documents(query, parent_docs, top_n=final_top_n)

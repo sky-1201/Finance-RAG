@@ -10,29 +10,28 @@ logger = logging.getLogger(__name__)
 class HybridSearchEngine:
     def __init__(self):
         logger.info("🔌 初始化 Milvus 原生双路检索引擎...")
-        # 这里的 BM25 引擎不再需要存储海量数据，它仅用于把用户的 Query 切词转化为稀疏矩阵
+        # 这里的 BM25 引擎不再需要存储海量数据，仅用于把用户的 Query 切词转化为稀疏矩阵
         self.analyzer = BM25EmbeddingFunction(analyzer=jieba.lcut)
 
     def execute_search(self, query: str, query_dense_vec: list, collection, expr: str, top_k: int = 15) -> List[Dict]:
         """
         组装双路请求，并直接交由 Milvus 数据库底层完成并行召回与 RRF 融合
         """
-        # 1. 瞬间生成用户 Query 的稀疏向量矩阵
+        # 1. 生成用户 Query 的稀疏向量矩阵
         query_sparse_matrix = self.analyzer.encode_queries([query])
 
-        # 🌟 核心终极修复 (兼容所有版本 SciPy):
-        # 直接读取底层 C 语言数组的指针 (indptr) 和数据 (data)，完美避开版本差异，速度达到极致！
+        # 读取底层 C 语言数组的指针 (indptr) 和数据 (data)，避开版本差异
         sparse_dict_list = []
         for i in range(query_sparse_matrix.shape[0]):
             # 找到第 i 行在底层一维数组中的起止位置
             start_idx = query_sparse_matrix.indptr[i]
             end_idx = query_sparse_matrix.indptr[i + 1]
 
-            # 直接切片取出词的 ID 列表和对应的权重列表
+            # 切片取出词的 ID 列表和对应的权重列表
             indices = query_sparse_matrix.indices[start_idx:end_idx]
             values = query_sparse_matrix.data[start_idx:end_idx]
 
-            # 瞬间拼装成 Milvus 唯一认准的字典格式
+            # 拼装成 Milvus 唯一认准的字典格式
             sparse_dict_list.append({int(k): float(v) for k, v in zip(indices, values)})
 
         # 2. 构建 Dense (语义) 召回请求
@@ -53,7 +52,7 @@ class HybridSearchEngine:
             expr=expr
         )
 
-        # 4. 🌟 召唤奇迹：底层 C++ 极速原生融合
+        # 4. 底层 C++ 原生融合
         results = collection.hybrid_search(
             reqs=[req_dense, req_sparse],
             rerank=RRFRanker(k=60),

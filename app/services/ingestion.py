@@ -44,7 +44,7 @@ class DocumentIngestionService:
             strip_headers=False
         )
 
-        # 虽然用双库了，但保留一个物理兜底（比如按 40000 切），确保极个别变态文本也能安全落盘
+        # 保留一个物理兜底（比如按 40000 切），确保极个别变态文本也能安全落盘
         self.parent_fallback_splitter = RecursiveCharacterTextSplitter(
             chunk_size=40000,
             chunk_overlap=1000
@@ -73,8 +73,6 @@ class DocumentIngestionService:
         # 获取原始匹配的字符串
         raw_company = company_match.group(1) if company_match else "未知"
 
-        # 🌟 核心清洗逻辑：剔除字符串首尾的空格、全/半角冒号、破折号、下划线等标点符号
-        # strip() 里面的字符就是我们要剔除的“黑名单”
         clean_company = raw_company.strip(" ：:_- \t")
 
         return {
@@ -90,7 +88,7 @@ class DocumentIngestionService:
             display_name = original_filename if original_filename else path.name
 
             # ==========================================
-            # 🛡️ Step 0: 物理级指纹查重 (Hash Fingerprinting)
+            # 物理级指纹查重 (Hash Fingerprinting)
             # ==========================================
             logger.info(f"Step 0: 正在计算文件指纹并查重...")
             file_md5 = self._calculate_md5(pdf_path)
@@ -114,12 +112,12 @@ class DocumentIngestionService:
             md_text = ""
 
             try:
-                # 1. 先用极其轻量的 pypdf 偷看一下总页数
+                # 1. 先用极其轻量的 pypdf 看一下总页数
                 reader = PdfReader(path)
                 total_pages = len(reader.pages)
                 logger.info(f"📄 检测到该文件共有 {total_pages} 页，准备切片解析...")
 
-                # 2. 核心：每 30 页为一个批次，防止内存爆炸
+                # 2. 每 30 页为一个批次，防止内存爆炸
                 chunk_size = 30
 
                 # 如果用户没有指定页码，我们就自己按批次循环
@@ -128,7 +126,7 @@ class DocumentIngestionService:
                         end_page = min(start_page + chunk_size - 1, total_pages)
                         logger.info(f"⏳ 正在解析批次: 第 {start_page} ~ {end_page} 页...")
 
-                        # 让 Docling 只处理这几十页
+                        #  Docling 只处理这几十页
                         doc_result = self.converter.convert(path, page_range=(start_page, end_page))
                         # 把这部分转成 Markdown 拼接到总文本里
                         md_text += doc_result.document.export_to_markdown() + "\n\n"
@@ -184,7 +182,7 @@ class DocumentIngestionService:
             logger.info("Step 3: Executing Compute & Storage Decoupling Pipeline...")
 
             # ----------------------------------------------------
-            # 🟢 分支 1：将超级父块存入 PostgreSQL 存储层
+            #  分支 1：将父块存入 PostgreSQL 存储层
             # ----------------------------------------------------
             logger.info("📦 开始将完整父块写入 PostgreSQL 存储层...")
             db = SessionLocal()
@@ -211,7 +209,7 @@ class DocumentIngestionService:
                 db.close()
 
             # ----------------------------------------------------
-            # 🔵 分支 2：将子块及其向量存入 Milvus 计算层
+            #  分支 2：将子块及其向量存入 Milvus 计算层
             # ----------------------------------------------------
             logger.info(f"🧠 开始处理子块及其向量...")
 
@@ -259,8 +257,8 @@ class DocumentIngestionService:
                 # 3. 为稀疏向量建专用的倒排索引
                 logger.info("⚙️ 正在创建 Sparse 稀疏向量专用倒排索引...")
                 sparse_index_params = {
-                    "index_type": "SPARSE_INVERTED_INDEX",  #  强制规定：稀疏向量只能用这个索引类型
-                    "metric_type": "IP",  #  强制规定：稀疏向量的匹配只能用内积 (Inner Product)
+                    "index_type": "SPARSE_INVERTED_INDEX",  # 稀疏向量只能用这个索引类型
+                    "metric_type": "IP",  #  稀疏向量的匹配只能用内积 (Inner Product)
                     "params": {"drop_ratio_build": 0.2}  # 丢弃 20% 低频无意义的词，可大幅节省内存
                 }
                 collection.create_index("sparse_vector", sparse_index_params)
@@ -273,7 +271,7 @@ class DocumentIngestionService:
             logger.info(f"⏳ 正在向 API 请求 {len(child_docs)} 个子块向量...")
             child_texts = [doc.page_content for doc in child_docs]
 
-            #必须为每个子块生成唯一的主键 chunk_id
+            # 必须为每个子块生成唯一的主键 chunk_id
             child_ids = [str(uuid.uuid4()) for _ in child_docs]
 
             # 【第 1 路】：请求云端 API 生成密集向量 (Dense Vector)
@@ -295,13 +293,13 @@ class DocumentIngestionService:
             # 编码出稀疏矩阵 (包含词的 ID 和权重)
             sparse_embeddings = analyzer.encode_documents(child_texts)
 
-            # 🌟 修正2：组装并原生插入 Milvus（必须与你上面的 FieldSchema 顺序和数量严格一致！）
+            # 组装并原生插入 Milvus（必须与你上面的 FieldSchema 顺序和数量严格一致！）
             milvus_insert_data = [
                 child_ids,  # 第1列: chunk_id (主键)
                 child_texts,  # 第2列: text
                 child_embeddings,  # 第3列: dense_vector
                 sparse_embeddings,  # 第4列: sparse_vector
-                [doc.metadata for doc in child_docs]  # 第5列: metadata (包含 parent_id)
+                [doc.metadata for doc in child_docs]  # 第5列: metadata
             ]
 
             logger.info("📦 正在向 Milvus 双路向量库写入数据...")

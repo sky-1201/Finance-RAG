@@ -13,12 +13,11 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "qwen-max"
 
     # --- Milvus 向量库配置 (Docker Standalone 模式) ---
-    # 删除了废弃的 MILVUS_URI 本地文件模式
     MILVUS_HOST: str = "127.0.0.1"
     MILVUS_PORT: str = "19531"
     COLLECTION_NAME: str = "finance_reports_v3"
 
-    # --- Chunking 策略配置 (即将用到) ---
+    # --- Chunking 策略配置
     CHUNK_SIZE: int = 500
     CHUNK_OVERLAP: int = 50
 
